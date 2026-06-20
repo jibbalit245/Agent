@@ -78,6 +78,74 @@ GPT-5 and GPT-5-mini were released in 2026 as the newest flagship generation wit
 - `o4-mini` — reportedly retired from API on February 13, 2026 (check current status)
 - Legacy `gpt-4`, `gpt-4-turbo` — superseded by GPT-4o and GPT-4.1
 
+## GPT-5 Series (2026)
+
+The GPT-5 family represents the newest flagship generation as of 2026:
+
+### GPT-5.5 (Latest Flagship — April 2026)
+- **Model ID:** `gpt-5.5`, `gpt-5.5-2026-04-23`
+- **Context window:** 1,050,000 tokens
+- **Max output:** 128,000 tokens
+- **Pricing:** $5.00/$30.00 per 1M input/output; cached: $0.50/1M
+- **Pricing note:** For prompts >272K tokens: 2x input + 1.5x output for full session
+
+### GPT-5.5 Pro
+- **Model ID:** `gpt-5.5-pro`
+- **Pricing:** $30.00/$180.00 per 1M input/output
+- **Access:** Paid tiers only
+
+### GPT-5.4 (March 2026)
+- **Model ID:** `gpt-5.4`
+- **Pricing:** $2.50/$15.00 per 1M input/output
+
+### GPT-5.4 Nano
+- **Model ID:** `gpt-5.4-nano`
+- **Pricing:** $0.20/$1.25 per 1M input/output
+
+### GPT-5
+- **Model ID:** `gpt-5`
+- **Pricing:** $1.25/$10.00 per 1M input/output
+
+### GPT-5 Mini
+- **Model ID:** `gpt-5-mini`
+- **Pricing:** $0.25/$2.00 per 1M input/output
+
+## o1 Specifics
+
+### o1 Pro
+- **Model ID:** `o1-pro`
+- **Use case:** Maximum reasoning, highest accuracy
+
+### Key o1 Limitations vs GPT Models
+- Does NOT support `temperature`, `top_p`, `presence_penalty`, `frequency_penalty`
+- Does NOT support system messages (use `"developer"` role)
+- Reasoning tokens are generated internally and charged but not visible by default
+- Use `max_completion_tokens` (not `max_tokens`) to include reasoning token budget
+
+## Pricing Summary (Complete, June 2026)
+
+| Model | Input ($/1M) | Output ($/1M) | Cached ($/1M) |
+|-------|-------------|--------------|---------------|
+| gpt-5.5 | $5.00 | $30.00 | $0.50 |
+| gpt-5.5-pro | $30.00 | $180.00 | — |
+| gpt-5.4 | $2.50 | $15.00 | ~$0.25 |
+| gpt-5.4-nano | $0.20 | $1.25 | — |
+| gpt-5 | $1.25 | $10.00 | — |
+| gpt-5-mini | $0.25 | $2.00 | — |
+| gpt-4.1 | $2.00 | $8.00 | $0.50 |
+| gpt-4.1-mini | $0.40 | $1.60 | $0.10 |
+| gpt-4.1-nano | $0.10 | $0.40 | $0.025 |
+| gpt-4o | $2.50 | $10.00 | $1.25 |
+| gpt-4o-mini | $0.15 | $0.60 | $0.075 |
+| o1 | $15.00 | $60.00 | $7.50 |
+| o1-mini | $3.00 | $12.00 | — |
+| o3 | $2.00 | $8.00 | — |
+| o3-mini | $1.10 | $4.40 | — |
+| o3-pro | $20.00 | $80.00 | — |
+| o4-mini | $1.10 | $4.40 | — |
+
+**Batch API**: 50% off all above prices.
+
 ## Sources
 - [Models | OpenAI API](https://developers.openai.com/api/docs/models)
 - [All models | OpenAI API](https://developers.openai.com/api/docs/all-models)
@@ -85,3 +153,5 @@ GPT-5 and GPT-5-mini were released in 2026 as the newest flagship generation wit
 - [Introducing OpenAI o3 and o4-mini | OpenAI](https://openai.com/index/introducing-o3-and-o4-mini/)
 - [Deprecations | OpenAI API](https://developers.openai.com/api/docs/deprecations)
 - [Changelog | OpenAI API](https://platform.openai.com/docs/changelog)
+- [Every OpenAI model in 2026 | eesel AI](https://www.eesel.ai/blog/openai-models-list)
+- [OpenAI API Pricing 2026 | DevTk.AI](https://devtk.ai/en/blog/openai-api-pricing-guide-2026/)
