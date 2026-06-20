@@ -74,10 +74,11 @@ if not providers:
 
 # ── Tool registry ──────────────────────────────────────────────────
 # Import tool modules — side-effects register tools into the global registry
-import harness.tools.web           # noqa: F401  registers web_search, web_fetch
-import harness.tools.python_exec   # noqa: F401  registers python_exec
-import harness.tools.memory_tools  # noqa: F401  registers memory_save, memory_load
-import harness.tools.summarize     # noqa: F401  registers summarize
+import harness.tools.web              # noqa: F401  registers web_search, web_fetch
+import harness.tools.python_exec      # noqa: F401  registers python_exec
+import harness.tools.memory_tools     # noqa: F401  registers memory_save, memory_load
+import harness.tools.summarize        # noqa: F401  registers summarize
+import harness.tools.knowledge_search # noqa: F401  registers knowledge_search
 
 from harness.tools.registry import registry as tool_registry
 from harness.tools.summarize import set_provider as configure_summarize
