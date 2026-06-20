@@ -10,9 +10,8 @@ Handles:
   - /editagent <id> <field> <value>  — update an agent's field
   - /deleteagent <id>       — delete a user-created agent
   - /myagent                — show the currently active agent's config
-
-The "newagent wizard" is a multi-step conversation flow that walks the user
-through setting name, description, system prompt, model, and tools.
+  - /thinking [level]       — control reasoning depth
+  - /workshop [idea]        — start a development pipeline session
 """
 
 import logging
@@ -45,6 +44,74 @@ logger = logging.getLogger(__name__)
 # ------------------------------------------------------------------
 
 _W_NAME, _W_DESCRIPTION, _W_SYSTEM, _W_MODEL, _W_TOOLS, _W_TEMP, _W_CONFIRM = range(7)
+
+# Workshop states (20-24, non-overlapping with wizard 0-6)
+_WS_DISCOVER, _WS_PLAN, _WS_APPROVE, _WS_EXECUTE, _WS_REFINE = range(20, 25)
+
+# ------------------------------------------------------------------
+# Workshop coordinator system prompt
+# ------------------------------------------------------------------
+
+_WORKSHOP_SYSTEM = """\
+You are running a **Workshop Session** — a structured development pipeline to turn raw ideas into executed work.
+
+## Your Phases
+
+### Phase 1: DISCOVER (you are here when context says DISCOVER)
+You are a sharp senior architect listening to an idea. Your job:
+- Ask *targeted* clarifying questions — one or two at a time, not a list of ten
+- Dig into what the person actually wants to BUILD, not just what they said
+- Probe: What's the core value? Who uses it? What does success look like in 6 months?
+  What's the hardest part? What already exists? What's the budget/timeline?
+- After 2-3 rounds, when you have enough, write: "**I think I have enough to plan this. Ready when you are — say 'plan it' or keep going.**"
+
+### Phase 2: PLAN (you are here when context says PLAN)
+Generate a concrete, buildable plan. Format exactly:
+
+**UNDERSTANDING**
+[What you think they want to build — precise, no filler]
+
+**ASSUMPTIONS**
+[Things you're taking as true that could be wrong]
+
+**SCOPE** (this session)
+[What we're doing NOW vs what's deferred]
+
+**ARCHITECTURE**
+[Key technical decisions with brief rationale]
+
+**IMPLEMENTATION STEPS**
+1. [Specific, actionable step with clear deliverable]
+2. ...
+(Number every step. Be concrete. No vague steps like "set up environment" — say exactly what.)
+
+**AGENT ASSIGNMENTS**
+[Which specialized agent (researcher/coder/analyst) handles which steps, if any]
+
+**OPEN QUESTIONS**
+[Things that need a decision before we can proceed]
+
+End with: "**Say 'execute' to start, or give me corrections.**"
+
+### Phase 3: EXECUTE (you are here when context says EXECUTE)
+You are executing the plan. Use tools aggressively:
+- `web_search` + `web_fetch` for current information
+- `python_exec` to write, run, and verify code
+- `knowledge_search` for platform-specific patterns
+- `council_consult` for complex architectural or scientific questions
+Show your work. After each major step, output: "✓ Step N complete: [what was done]"
+
+### Phase 4: REFINE (you are here when context says REFINE)
+Review what was produced. Identify what's missing, wrong, or incomplete.
+Run tests. Fix gaps. Ask: "Is this actually done, or does it just look done?"
+When genuinely complete, summarize what was built.
+
+## Rules
+- No fluff. Every sentence must carry information.
+- If you're unsure what they want, ask — don't guess and build the wrong thing.
+- If you hit a genuine blocker, say so clearly: what's blocked, why, what you need.
+- Never say "I'll do X" without actually doing it in the same message.
+"""
 
 # ------------------------------------------------------------------
 # Helper formatting
@@ -145,6 +212,7 @@ class TelegramBot:
         self.memory_dir = memory_dir
         self.allowed_user_ids = set(allowed_user_ids) if allowed_user_ids else None
         self._wizard_data: dict[int, dict[str, Any]] = {}  # user_id → draft config
+        self._workshop: dict[int, dict[str, Any]] = {}     # user_id → workshop state
 
     def _user_id(self, update: Update) -> str:
         """Return a stable string session ID for this Telegram user."""
@@ -225,6 +293,11 @@ class TelegramBot:
             *Editable fields for /editagent:*
               `name`, `description`, `model`, `system_prompt`,
               `tools`, `temperature`, `brain_mode`
+
+            *Development Pipeline*
+            /workshop — start a structured build session (discover → plan → execute → refine)
+            /workshop `<idea>` — start with an initial idea
+            /wsdone — end current workshop session
 
             *Reasoning Depth*
             /thinking — show current thinking config
@@ -757,6 +830,194 @@ class TelegramBot:
             )
 
     # ------------------------------------------------------------------
+    # Workshop pipeline
+    # ------------------------------------------------------------------
+
+    def _ws_session_id(self, user_id: int) -> str:
+        return f"workshop_{user_id}"
+
+    async def _ws_chat(self, user_id: int, phase: str, message: str) -> str:
+        """Route a workshop message through the orchestrator with phase context injected."""
+        from harness.core.orchestrator import Orchestrator
+        from harness.core.brain import Brain
+        from harness.tools.registry import registry as tool_registry
+
+        ws = self._workshop[user_id]
+
+        # Build or reuse the workshop orchestrator (uses primary provider/model)
+        if "orchestrator" not in ws:
+            session = self.manager.ensure_session(f"telegram_{user_id}")
+            provider_name = session.agent_config.provider
+            provider = self.manager.providers.get(provider_name) or next(
+                iter(self.manager.providers.values())
+            )
+            brain = Brain(
+                provider=provider,
+                model=session.agent_config.model,
+                mode=session.agent_config.brain_mode,
+                system_prompt=_WORKSHOP_SYSTEM,
+                thinking=session.agent_config.thinking or None,
+            )
+            ws["orchestrator"] = Orchestrator(
+                brain=brain,
+                tool_registry=tool_registry,
+                max_iterations=15,
+                system_prompt=_WORKSHOP_SYSTEM,
+            )
+            ws["history"] = []
+
+        # Inject phase context
+        prefixed = f"[WORKSHOP PHASE: {phase}]\n\n{message}"
+
+        result = await ws["orchestrator"].run(
+            user_message=prefixed,
+            history=ws["history"],
+            temperature=0.4,
+            max_tokens=4096,
+        )
+
+        from harness.providers.base import Message
+        ws["history"].append(Message(role="user", content=prefixed))
+        ws["history"].append(Message(role="assistant", content=result.text))
+
+        return result.text or "(no response)"
+
+    async def ws_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        """Entry point: /workshop [optional initial idea]"""
+        if not self._is_allowed(update):
+            return ConversationHandler.END
+        uid = update.effective_user.id
+        await self._setup_session(update)
+
+        self._workshop[uid] = {"phase": "DISCOVER"}
+
+        initial = " ".join(context.args) if context.args else ""
+
+        await self._reply(
+            update,
+            "*Workshop Session Started* 🔨\n\n"
+            "This is a structured development pipeline:\n"
+            "  1. *Discover* — we nail down what you're building\n"
+            "  2. *Plan* — concrete implementation steps\n"
+            "  3. *Execute* — I build it with full tool access\n"
+            "  4. *Refine* — fill gaps, polish, complete\n\n"
+            "Commands during the session:\n"
+            "  `plan it` / `let's plan` → jump to planning\n"
+            "  `execute` → start execution\n"
+            "  `refine` → switch to refinement\n"
+            "  `/wsdone` → end session\n\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            "**What are you building?** Tell me everything — don't filter yourself."
+            + (f"\n\n_(You said: {initial})_" if initial else ""),
+        )
+
+        if initial:
+            response = await self._ws_chat(uid, "DISCOVER", initial)
+            await self._reply(update, response)
+
+        return _WS_DISCOVER
+
+    async def ws_discover(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        """DISCOVER phase — free-form idea exploration."""
+        uid = update.effective_user.id
+        text = update.message.text.strip()
+
+        # Check for phase transition keywords
+        lower = text.lower()
+        if any(k in lower for k in ("plan it", "let's plan", "lets plan", "make a plan", "ready to plan")):
+            return await self._transition_to_plan(update, uid, text)
+
+        await update.message.chat.send_action("typing")
+        response = await self._ws_chat(uid, "DISCOVER", text)
+        await self._reply(update, response)
+
+        # Auto-detect if AI is signaling readiness to plan
+        if "ready when you are" in response.lower() or "say 'plan it'" in response.lower():
+            self._workshop[uid]["ai_ready"] = True
+
+        return _WS_DISCOVER
+
+    async def _transition_to_plan(self, update: Update, uid: int, trigger_text: str) -> int:
+        """Transition from DISCOVER to PLAN phase."""
+        self._workshop[uid]["phase"] = "PLAN"
+        await update.message.chat.send_action("typing")
+        response = await self._ws_chat(uid, "PLAN", trigger_text)
+        await self._reply(update, response)
+        return _WS_PLAN
+
+    async def ws_plan(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        """PLAN phase — user reviews and adjusts the plan."""
+        uid = update.effective_user.id
+        text = update.message.text.strip()
+        lower = text.lower()
+
+        if any(k in lower for k in ("execute", "start", "go", "do it", "let's go", "build it")):
+            self._workshop[uid]["phase"] = "EXECUTE"
+            await update.message.chat.send_action("typing")
+            intro = await self._ws_chat(uid, "EXECUTE", "Begin executing the plan. Start with step 1.")
+            await self._reply(update, intro)
+            return _WS_EXECUTE
+
+        await update.message.chat.send_action("typing")
+        response = await self._ws_chat(uid, "PLAN", text)
+        await self._reply(update, response)
+        return _WS_PLAN
+
+    async def ws_execute(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        """EXECUTE phase — AI does the work with full tool access."""
+        uid = update.effective_user.id
+        text = update.message.text.strip()
+        lower = text.lower()
+
+        if any(k in lower for k in ("refine", "review", "done", "next step", "what's next")):
+            self._workshop[uid]["phase"] = "REFINE"
+            await update.message.chat.send_action("typing")
+            response = await self._ws_chat(uid, "REFINE", text)
+            await self._reply(update, response)
+            return _WS_REFINE
+
+        await update.message.chat.send_action("typing")
+        response = await self._ws_chat(uid, "EXECUTE", text)
+        await self._reply(update, response)
+        return _WS_EXECUTE
+
+    async def ws_refine(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        """REFINE phase — review, fill gaps, iterate."""
+        uid = update.effective_user.id
+        text = update.message.text.strip()
+        lower = text.lower()
+
+        if any(k in lower for k in ("execute more", "keep going", "continue", "do more")):
+            self._workshop[uid]["phase"] = "EXECUTE"
+            await update.message.chat.send_action("typing")
+            response = await self._ws_chat(uid, "EXECUTE", text)
+            await self._reply(update, response)
+            return _WS_EXECUTE
+
+        await update.message.chat.send_action("typing")
+        response = await self._ws_chat(uid, "REFINE", text)
+        await self._reply(update, response)
+        return _WS_REFINE
+
+    async def ws_done(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        """End the workshop session."""
+        uid = update.effective_user.id
+        ws = self._workshop.pop(uid, {})
+        turns = len(ws.get("history", [])) // 2
+        await self._reply(
+            update,
+            f"*Workshop session ended.* ({turns} turns)\n\n"
+            "Your normal chat session is still active. Start a new one with `/workshop`."
+        )
+        return ConversationHandler.END
+
+    async def ws_cancel(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        uid = update.effective_user.id
+        self._workshop.pop(uid, None)
+        await self._reply(update, "Workshop cancelled. Use `/workshop` to start a new one.")
+        return ConversationHandler.END
+
+    # ------------------------------------------------------------------
     # Application builder
     # ------------------------------------------------------------------
 
@@ -780,6 +1041,36 @@ class TelegramBot:
             allow_reentry=True,
         )
 
+        # Workshop ConversationHandler
+        _ws_text = filters.TEXT & ~filters.COMMAND
+        workshop = ConversationHandler(
+            entry_points=[CommandHandler("workshop", self.ws_start)],
+            states={
+                _WS_DISCOVER: [
+                    CommandHandler("wsdone", self.ws_done),
+                    MessageHandler(_ws_text, self.ws_discover),
+                ],
+                _WS_PLAN: [
+                    CommandHandler("wsdone", self.ws_done),
+                    MessageHandler(_ws_text, self.ws_plan),
+                ],
+                _WS_EXECUTE: [
+                    CommandHandler("wsdone", self.ws_done),
+                    MessageHandler(_ws_text, self.ws_execute),
+                ],
+                _WS_REFINE: [
+                    CommandHandler("wsdone", self.ws_done),
+                    MessageHandler(_ws_text, self.ws_refine),
+                ],
+            },
+            fallbacks=[
+                CommandHandler("cancel", self.ws_cancel),
+                CommandHandler("wsdone", self.ws_done),
+            ],
+            allow_reentry=True,
+        )
+
+        app.add_handler(workshop)
         app.add_handler(wizard)
         app.add_handler(CommandHandler("start", self.cmd_start))
         app.add_handler(CommandHandler("help", self.cmd_help))
@@ -808,6 +1099,8 @@ class TelegramBot:
             BotCommand("editagent", "Edit an agent: /editagent <id> <field> <value>"),
             BotCommand("deleteagent", "Delete an agent: /deleteagent <id>"),
             BotCommand("thinking", "Control reasoning depth: /thinking [off|low|medium|high|N]"),
+            BotCommand("workshop", "Start development pipeline: /workshop [initial idea]"),
+            BotCommand("wsdone", "End the current workshop session"),
             BotCommand("reset", "Clear conversation history"),
             BotCommand("cancel", "Cancel current operation"),
         ]

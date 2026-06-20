@@ -20,6 +20,7 @@ class Settings:
     # Provider API keys
     ANTHROPIC_API_KEY: str = os.getenv("ANTHROPIC_API_KEY", "")
     OPENROUTER_API_KEY: str = os.getenv("OPENROUTER_API_KEY", "")
+    OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
     HF_TOKEN: str = os.getenv("HF_TOKEN", "")
 
     # Brain configuration

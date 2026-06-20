@@ -63,6 +63,14 @@ if settings.OPENROUTER_API_KEY:
     except ImportError:
         logger.warning("OpenRouter provider not available (missing module)")
 
+if settings.OPENAI_API_KEY:
+    try:
+        from harness.providers.openai_provider import OpenAIProvider
+        providers["openai"] = OpenAIProvider(api_key=settings.OPENAI_API_KEY)
+        logger.info("OpenAI provider initialized")
+    except Exception as exc:
+        logger.warning("OpenAI provider failed: %s", exc)
+
 if settings.HF_TOKEN:
     from harness.providers.huggingface_provider import HuggingFaceProvider
     providers["hf"] = HuggingFaceProvider(api_key=settings.HF_TOKEN)
@@ -79,13 +87,19 @@ import harness.tools.python_exec      # noqa: F401  registers python_exec
 import harness.tools.memory_tools     # noqa: F401  registers memory_save, memory_load
 import harness.tools.summarize        # noqa: F401  registers summarize
 import harness.tools.knowledge_search # noqa: F401  registers knowledge_search
+import harness.tools.council          # noqa: F401  registers council_consult
 
 from harness.tools.registry import registry as tool_registry
 from harness.tools.summarize import set_provider as configure_summarize
+from harness.tools.council import set_council_providers
 
 # Wire up the summarize tool with the primary provider
 primary_provider = providers.get(settings.BRAIN_PROVIDER) or next(iter(providers.values()))
 configure_summarize(primary_provider, settings.FAST_MODEL)
+
+# Wire up the council tool with all available providers
+set_council_providers(providers, primary_model=settings.BRAIN_MODEL, fast_model=settings.FAST_MODEL)
+logger.info("Council configured with providers: %s", list(providers.keys()))
 
 logger.info("Tools registered: %s", tool_registry.get_names())
 
