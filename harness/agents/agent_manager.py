@@ -213,6 +213,32 @@ class AgentManager:
             return True
         return False
 
+    def set_thinking(self, user_id: str, thinking: dict) -> bool:
+        """
+        Update the thinking config for the user's active session.
+
+        Rebuilds the orchestrator so the change takes effect immediately.
+        Returns True if a session existed and was updated.
+        """
+        session = self.get_active_session(user_id)
+        if session is None:
+            return False
+        session.agent_config.thinking = thinking
+        session.agent_config.touch()
+        session.orchestrator = self._make_orchestrator(session.agent_config)
+        logger.info(
+            "Updated thinking for session %s: %s",
+            session.session_id, thinking,
+        )
+        return True
+
+    def get_thinking(self, user_id: str) -> dict | None:
+        """Return the current thinking config for the user's active session."""
+        session = self.get_active_session(user_id)
+        if session is None:
+            return None
+        return session.agent_config.thinking
+
     def list_user_sessions(self, user_id: str) -> list[AgentSession]:
         """Return all active sessions for a user."""
         prefix = f"{user_id}::"

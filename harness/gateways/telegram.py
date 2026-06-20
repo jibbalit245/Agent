@@ -99,6 +99,16 @@ def _agent_detail(config: AgentConfig) -> str:
     """Format a detailed view of an agent config."""
     tools_str = ", ".join(f"`{t}`" for t in config.tools) or "none"
     prompt_preview = config.system_prompt[:200] + ("..." if len(config.system_prompt) > 200 else "")
+    thinking = config.thinking or {}
+    if thinking.get("enabled"):
+        if "budget_tokens" in thinking:
+            thinking_str = f"enabled ({thinking['budget_tokens']} tokens)"
+        elif "effort" in thinking:
+            thinking_str = f"enabled (effort: {thinking['effort']})"
+        else:
+            thinking_str = "enabled"
+    else:
+        thinking_str = "disabled"
     return (
         f"*{config.name}*\n"
         f"ID: `{config.id}`\n"
@@ -106,6 +116,7 @@ def _agent_detail(config: AgentConfig) -> str:
         f"Model: `{config.model}`\n"
         f"Mode: `{config.brain_mode}`\n"
         f"Temperature: `{config.temperature}`\n"
+        f"Thinking: `{thinking_str}`\n"
         f"Tools: {tools_str}\n"
         f"System prompt preview:\n```\n{prompt_preview}\n```"
     )
@@ -214,6 +225,13 @@ class TelegramBot:
             *Editable fields for /editagent:*
               `name`, `description`, `model`, `system_prompt`,
               `tools`, `temperature`, `brain_mode`
+
+            *Reasoning Depth*
+            /thinking — show current thinking config
+            /thinking off — disable extended reasoning
+            /thinking 8000 — enable Claude extended thinking (budget tokens)
+            /thinking high — high-effort preset (16k tokens / o-series high effort)
+            /thinking low|medium|high — presets
 
             *Conversation*
             /reset — clear chat history with current agent
@@ -608,6 +626,102 @@ class TelegramBot:
         return ConversationHandler.END
 
     # ------------------------------------------------------------------
+    # Thinking control
+    # ------------------------------------------------------------------
+
+    async def cmd_thinking(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """
+        /thinking            — show current thinking config
+        /thinking off        — disable extended thinking
+        /thinking <N>        — enable with Claude budget_tokens=N (e.g. /thinking 8000)
+        /thinking low|medium|high  — preset budgets (2000 / 6000 / 16000) or o-series effort
+        /thinking effort <level>   — explicitly set o-series effort (low/medium/high)
+        """
+        if not self._is_allowed(update):
+            return
+        uid = await self._setup_session(update)
+        session = self.manager.get_active_session(uid)
+
+        if not context.args:
+            current = self.manager.get_thinking(uid) or {}
+            if not current or not current.get("enabled"):
+                await self._reply(update, (
+                    "*Thinking: disabled*\n\n"
+                    "Extended reasoning is off. Commands:\n"
+                    "  `/thinking off` — keep disabled\n"
+                    "  `/thinking <N>` — enable with N budget tokens (e.g. `/thinking 8000`)\n"
+                    "  `/thinking low|medium|high` — preset budgets\n"
+                    "  `/thinking effort high` — set o-series reasoning effort"
+                ))
+            else:
+                budget = current.get("budget_tokens")
+                effort = current.get("effort")
+                detail = f"budget_tokens: `{budget}`" if budget else f"effort: `{effort}`"
+                await self._reply(update, (
+                    f"*Thinking: enabled*\n{detail}\n\n"
+                    "Commands:\n"
+                    "  `/thinking off` — disable\n"
+                    "  `/thinking <N>` — change budget (e.g. `/thinking 12000`)\n"
+                    "  `/thinking low|medium|high` — presets\n"
+                    "  `/thinking effort high` — o-series effort"
+                ))
+            return
+
+        arg = context.args[0].lower()
+
+        _PRESETS = {
+            "low":    {"enabled": True, "budget_tokens": 2000, "effort": "low"},
+            "medium": {"enabled": True, "budget_tokens": 6000, "effort": "medium"},
+            "high":   {"enabled": True, "budget_tokens": 16000, "effort": "high"},
+            "max":    {"enabled": True, "budget_tokens": 32000, "effort": "high"},
+        }
+
+        if arg in ("off", "disable", "false", "no", "0"):
+            new_thinking = {"enabled": False}
+            label = "disabled"
+
+        elif arg in _PRESETS:
+            new_thinking = _PRESETS[arg]
+            label = f"enabled — {arg} preset"
+
+        elif arg == "effort" and len(context.args) >= 2:
+            level = context.args[1].lower()
+            if level not in ("low", "medium", "high"):
+                await self._reply(update, "Effort must be `low`, `medium`, or `high`.")
+                return
+            new_thinking = {"enabled": True, "effort": level}
+            label = f"enabled — effort `{level}`"
+
+        elif arg.isdigit() or (arg.replace(".", "", 1).isdigit()):
+            budget = int(float(arg))
+            if budget < 100:
+                await self._reply(update, "Budget must be at least 100 tokens.")
+                return
+            if budget > 32000:
+                await self._reply(update, "Maximum budget is 32000 tokens (Claude limit).")
+                return
+            new_thinking = {"enabled": True, "budget_tokens": budget}
+            label = f"enabled — `{budget}` budget tokens"
+
+        else:
+            await self._reply(update, (
+                "Unknown thinking command.\n\n"
+                "Usage:\n"
+                "  `/thinking` — show current\n"
+                "  `/thinking off` — disable\n"
+                "  `/thinking 8000` — enable with 8000 budget tokens\n"
+                "  `/thinking low|medium|high` — preset\n"
+                "  `/thinking effort high` — o-series effort"
+            ))
+            return
+
+        updated = self.manager.set_thinking(uid, new_thinking)
+        if updated:
+            await self._reply(update, f"Thinking {label}. Takes effect on your next message.")
+        else:
+            await self._reply(update, "No active session. Send a message first to start one.")
+
+    # ------------------------------------------------------------------
     # Main message handler
     # ------------------------------------------------------------------
 
@@ -675,6 +789,7 @@ class TelegramBot:
         app.add_handler(CommandHandler("myagent", self.cmd_myagent))
         app.add_handler(CommandHandler("editagent", self.cmd_editagent))
         app.add_handler(CommandHandler("deleteagent", self.cmd_deleteagent))
+        app.add_handler(CommandHandler("thinking", self.cmd_thinking))
         app.add_handler(
             MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_message)
         )
@@ -692,6 +807,7 @@ class TelegramBot:
             BotCommand("newagent", "Create a new custom agent"),
             BotCommand("editagent", "Edit an agent: /editagent <id> <field> <value>"),
             BotCommand("deleteagent", "Delete an agent: /deleteagent <id>"),
+            BotCommand("thinking", "Control reasoning depth: /thinking [off|low|medium|high|N]"),
             BotCommand("reset", "Clear conversation history"),
             BotCommand("cancel", "Cancel current operation"),
         ]
