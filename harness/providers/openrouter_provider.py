@@ -108,6 +108,7 @@ class OpenRouterProvider(BaseProvider):
         tools: list[ToolDefinition] | None = None,
         temperature: float = 0.7,
         max_tokens: int = 4096,
+        thinking: dict | None = None,
     ) -> dict[str, Any]:
         """Run inference via OpenRouter and return normalized response."""
         api_messages = self._convert_messages(messages, system)
@@ -122,6 +123,14 @@ class OpenRouterProvider(BaseProvider):
         if api_tools:
             kwargs["tools"] = api_tools
             kwargs["tool_choice"] = "auto"
+
+        # reasoning_effort for OpenAI o-series and compatible models via OpenRouter
+        if thinking and thinking.get("enabled"):
+            effort = thinking.get("effort", "high")
+            model_lower = model.lower()
+            if any(x in model_lower for x in ("o1", "o3", "o4", "reasoning")):
+                kwargs["reasoning_effort"] = effort
+                kwargs.pop("temperature", None)  # o-series ignores temperature
 
         logger.debug(
             "OpenRouter request: model=%s, messages=%d, tools=%d",

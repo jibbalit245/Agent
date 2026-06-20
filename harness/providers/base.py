@@ -52,6 +52,7 @@ class BaseProvider(ABC):
         tools: list[ToolDefinition] | None = None,
         temperature: float = 0.7,
         max_tokens: int = 4096,
+        thinking: dict | None = None,
     ) -> dict[str, Any]:
         """
         Run inference and return a normalized response dict:

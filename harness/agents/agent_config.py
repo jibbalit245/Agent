@@ -27,6 +27,7 @@ def slugify(name: str) -> str:
 
 # All tools that agents can be granted access to
 ALL_TOOLS = [
+    "knowledge_search",
     "web_search",
     "web_fetch",
     "python_exec",
@@ -67,6 +68,12 @@ class AgentConfig:
     created_at: str = field(default_factory=_now_iso)
     updated_at: str = field(default_factory=_now_iso)
 
+    # thinking config — controls extended reasoning depth
+    # Claude:     {"enabled": true, "budget_tokens": 8000}   (up to 32000)
+    # OpenAI o*:  {"enabled": true, "effort": "high"}        (low/medium/high)
+    # DeepSeek:   thinking blocks are always on; this controls stripping them from output
+    thinking: dict = field(default_factory=dict)
+
     # Optional: path to knowledge/context files attached to this agent
     knowledge_files: list[str] = field(default_factory=list)
 
@@ -82,6 +89,7 @@ class AgentConfig:
             "system_prompt": self.system_prompt,
             "tools": self.tools,
             "temperature": self.temperature,
+            "thinking": self.thinking,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
             "knowledge_files": self.knowledge_files,
@@ -100,6 +108,7 @@ class AgentConfig:
             system_prompt=data.get("system_prompt", "You are a helpful AI assistant."),
             tools=data.get("tools", list(ALL_TOOLS)),
             temperature=float(data.get("temperature", 0.7)),
+            thinking=data.get("thinking", {}),
             created_at=data.get("created_at", _now_iso()),
             updated_at=data.get("updated_at", _now_iso()),
             knowledge_files=data.get("knowledge_files", []),
@@ -116,6 +125,7 @@ class AgentConfig:
         system_prompt: str = "You are a helpful AI assistant.",
         tools: list[str] | None = None,
         temperature: float = 0.7,
+        thinking: dict | None = None,
     ) -> "AgentConfig":
         """Factory method — derives ID from name and sets timestamps."""
         agent_id = slugify(name)
@@ -130,6 +140,7 @@ class AgentConfig:
             system_prompt=system_prompt,
             tools=tools if tools is not None else list(ALL_TOOLS),
             temperature=temperature,
+            thinking=thinking or {},
             created_at=now,
             updated_at=now,
         )

@@ -108,6 +108,7 @@ class AgentManager:
             model=config.model,
             mode=config.brain_mode,
             system_prompt=config.system_prompt,
+            thinking=config.thinking or None,
         )
 
         # Build a tool sub-registry with only the enabled tools

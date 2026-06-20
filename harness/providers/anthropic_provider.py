@@ -81,6 +81,7 @@ class AnthropicProvider(BaseProvider):
         tools: list[ToolDefinition] | None = None,
         temperature: float = 0.7,
         max_tokens: int = 4096,
+        thinking: dict | None = None,
     ) -> dict[str, Any]:
         """Run inference via Anthropic API and return normalized response."""
         api_messages = self._convert_messages(messages)
@@ -90,24 +91,40 @@ class AnthropicProvider(BaseProvider):
             "model": model,
             "messages": api_messages,
             "max_tokens": max_tokens,
-            "temperature": temperature,
         }
         if system:
             kwargs["system"] = system
         if api_tools:
             kwargs["tools"] = api_tools
 
-        logger.debug("Anthropic request: model=%s, messages=%d, tools=%d", model, len(api_messages), len(api_tools))
+        # Extended thinking — when enabled, temperature must be 1.0 per Anthropic spec
+        thinking_enabled = thinking and thinking.get("enabled")
+        if thinking_enabled:
+            budget = int(thinking.get("budget_tokens", 8000))
+            kwargs["thinking"] = {"type": "enabled", "budget_tokens": budget}
+            kwargs["max_tokens"] = max(max_tokens, budget + 1024)
+            kwargs["temperature"] = 1.0  # Required when thinking is active
+            logger.debug("Extended thinking enabled: budget=%d tokens", budget)
+        else:
+            kwargs["temperature"] = temperature
+
+        logger.debug(
+            "Anthropic request: model=%s, messages=%d, tools=%d, thinking=%s",
+            model, len(api_messages), len(api_tools), thinking_enabled,
+        )
 
         response = await self.client.messages.create(**kwargs)
 
-        # Normalize response
-        text_parts = []
-        tool_calls = []
+        # Normalize response — collect text, thinking, and tool_use blocks
+        text_parts: list[str] = []
+        thinking_parts: list[str] = []
+        tool_calls: list[dict] = []
 
         for block in response.content:
             if block.type == "text":
                 text_parts.append(block.text)
+            elif block.type == "thinking":
+                thinking_parts.append(getattr(block, "thinking", ""))
             elif block.type == "tool_use":
                 tool_calls.append({
                     "id": block.id,
@@ -115,7 +132,6 @@ class AnthropicProvider(BaseProvider):
                     "arguments": block.input if isinstance(block.input, dict) else json.loads(block.input),
                 })
 
-        # Map Anthropic stop reasons to our internal names
         stop_reason_map = {
             "end_turn": "end_turn",
             "tool_use": "tool_use",
@@ -126,6 +142,7 @@ class AnthropicProvider(BaseProvider):
 
         return {
             "text": "".join(text_parts),
+            "thinking": "".join(thinking_parts),  # exposes chain-of-thought if caller wants it
             "tool_calls": tool_calls,
             "stop_reason": stop_reason,
             "usage": {

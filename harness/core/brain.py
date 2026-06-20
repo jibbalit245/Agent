@@ -34,6 +34,7 @@ class Brain:
         model: str,
         mode: str = "native",
         system_prompt: str = "",
+        thinking: dict | None = None,
     ) -> None:
         if mode not in ("native", "tags"):
             raise ValueError(f"mode must be 'native' or 'tags', got {mode!r}")
@@ -41,6 +42,8 @@ class Brain:
         self.model = model
         self.mode = mode
         self.system_prompt = system_prompt
+        # thinking config: {"enabled": bool, "budget_tokens": int, "effort": str}
+        self.thinking: dict = thinking or {}
 
     def _tags_system_addendum(self, tools: list[ToolDefinition]) -> str:
         """
@@ -108,14 +111,14 @@ class Brain:
         temperature: float,
         max_tokens: int,
     ) -> dict[str, Any]:
-        system = self.system_prompt
         raw = await self.provider.complete(
             model=self.model,
             messages=messages,
-            system=system,
+            system=self.system_prompt,
             tools=tools if tools else None,
             temperature=temperature,
             max_tokens=max_tokens,
+            thinking=self.thinking or None,
         )
         return raw
 
@@ -130,17 +133,14 @@ class Brain:
         Tags mode: augment system prompt with tool instructions, send as a
         plain-text completion, then parse XML tool tags from the response.
         """
-        system = self.system_prompt
-        if tools:
-            system = system + self._tags_system_addendum(tools)
-
         raw = await self.provider.complete(
             model=self.model,
             messages=messages,
-            system=system,
-            tools=None,  # No native tools — we handle it ourselves
+            system=self.system_prompt + (self._tags_system_addendum(tools) if tools else ""),
+            tools=None,  # No native tools — we handle it ourselves via XML tags
             temperature=temperature,
             max_tokens=max_tokens,
+            thinking=self.thinking or None,
         )
 
         text: str = raw.get("text", "")

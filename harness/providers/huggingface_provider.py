@@ -111,6 +111,19 @@ class HuggingFaceProvider(BaseProvider):
             for tool in tools
         ]
 
+    @staticmethod
+    def _extract_thinking(text: str) -> tuple[str, str]:
+        """
+        Split DeepSeek-style <think>...</think> blocks from the visible response.
+
+        Returns (thinking_content, clean_text). Works even if tags are malformed
+        or span multiple blocks.
+        """
+        import re
+        thinking_blocks = re.findall(r"<think>(.*?)</think>", text, re.DOTALL)
+        clean = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+        return "\n\n".join(thinking_blocks).strip(), clean
+
     async def complete(
         self,
         model: str,
@@ -119,6 +132,7 @@ class HuggingFaceProvider(BaseProvider):
         tools: list[ToolDefinition] | None = None,
         temperature: float = 0.7,
         max_tokens: int = 4096,
+        thinking: dict | None = None,
     ) -> dict[str, Any]:
         """Run inference via HuggingFace Inference Router and return normalized response."""
         api_messages = self._convert_messages(messages, system)
@@ -145,8 +159,9 @@ class HuggingFaceProvider(BaseProvider):
         choice = response.choices[0]
         msg = choice.message
 
-        # Extract text content
-        text = msg.content or ""
+        # Extract text and strip DeepSeek-style <think> blocks
+        raw_text = msg.content or ""
+        thinking_content, text = self._extract_thinking(raw_text)
 
         # Extract tool calls (only relevant for models that support native tool calling)
         tool_calls = []
@@ -175,6 +190,7 @@ class HuggingFaceProvider(BaseProvider):
         usage = response.usage
         return {
             "text": text,
+            "thinking": thinking_content,
             "tool_calls": tool_calls,
             "stop_reason": stop_reason,
             "usage": {
