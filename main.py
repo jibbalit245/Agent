@@ -89,11 +89,17 @@ import harness.tools.summarize        # noqa: F401  registers summarize
 import harness.tools.knowledge_search # noqa: F401  registers knowledge_search
 import harness.tools.council          # noqa: F401  registers council_consult
 import harness.tools.long_context     # noqa: F401  registers long_context_read
+import harness.tools.graph_query      # noqa: F401  registers graph_query
 
 from harness.tools.registry import registry as tool_registry
 from harness.tools.summarize import set_provider as configure_summarize
 from harness.tools.council import set_council_providers
 from harness.tools.long_context import set_long_context_provider
+from harness.knowledge.extractor import set_extractor_provider
+from harness.knowledge import graph_db
+
+# Initialize the graph DB schema (safe no-op if already exists)
+graph_db.init_db()
 
 # Wire up the summarize tool with the primary provider
 primary_provider = providers.get(settings.BRAIN_PROVIDER) or next(iter(providers.values()))
@@ -102,6 +108,15 @@ configure_summarize(primary_provider, settings.FAST_MODEL)
 # Wire up the council tool with all available providers
 set_council_providers(providers, primary_model=settings.BRAIN_MODEL, fast_model=settings.FAST_MODEL)
 logger.info("Council configured with providers: %s", list(providers.keys()))
+
+# Wire up knowledge graph extractor (Haiku for volume, Sonnet for deep passes)
+_extractor_provider = providers.get("anthropic") or providers.get("openrouter") or primary_provider
+set_extractor_provider(
+    provider=_extractor_provider,
+    fast_model=settings.FAST_MODEL,
+    deep_model=settings.BRAIN_MODEL,
+)
+logger.info("Knowledge graph extractor ready (fast=%s, deep=%s)", settings.FAST_MODEL, settings.BRAIN_MODEL)
 
 # Wire up Llama Scout long-context tool — prefer openrouter, fall back to hf
 _lc_provider_name = settings.LONG_CONTEXT_PROVIDER or (
@@ -119,6 +134,22 @@ if _lc_provider_name and _lc_provider_name in providers:
     logger.info("Long-context provider: %s / %s", _lc_provider_name, _lc_model)
 else:
     logger.info("Long-context tool inactive (no openrouter or hf provider configured)")
+
+# Log graph stats at startup if the DB is populated
+try:
+    _stats = graph_db.get_stats()
+    if _stats["entities"] > 0:
+        logger.info(
+            "Knowledge graph: %d entities, %d facts, %d relationships",
+            _stats["entities"], _stats["facts"], _stats["relationships"],
+        )
+    else:
+        logger.info(
+            "Knowledge graph DB exists but is empty. "
+            "Run: python scripts/build_knowledge_graph.py"
+        )
+except Exception:
+    pass
 
 logger.info("Tools registered: %s", tool_registry.get_names())
 
@@ -159,8 +190,44 @@ bot = TelegramBot(
     memory_dir=settings.MEMORY_DIR,
 )
 
+# ── Nightly knowledge graph refresh ────────────────────────────────
+import asyncio as _asyncio
+
+async def _nightly_refresh_loop() -> None:
+    """Re-crawl all sources nightly at 03:00 UTC, extracting only changed pages."""
+    import datetime as _dt
+    while True:
+        now = _dt.datetime.now(_dt.timezone.utc)
+        # Next 03:00 UTC
+        target = now.replace(hour=3, minute=0, second=0, microsecond=0)
+        if target <= now:
+            target = target + _dt.timedelta(days=1)
+        wait_secs = (target - now).total_seconds()
+        logger.info("Knowledge graph refresh scheduled in %.1f hours", wait_secs / 3600)
+        await _asyncio.sleep(wait_secs)
+        logger.info("Starting nightly knowledge graph refresh...")
+        try:
+            from harness.knowledge.refresh import run_refresh
+            result = await run_refresh(concurrency=2, delay=1.5)
+            logger.info("Nightly refresh complete: %s", result)
+        except Exception as exc:
+            logger.error("Nightly refresh failed: %s", exc, exc_info=True)
+
+
 # ── Start ──────────────────────────────────────────────────────────
 if __name__ == "__main__":
+    import threading as _threading
+
     logger.info("Starting Agent Harness...")
     settings.MEMORY_DIR.mkdir(parents=True, exist_ok=True)
+
+    # Run the nightly refresh loop in a background thread with its own event loop
+    def _refresh_thread() -> None:
+        loop = _asyncio.new_event_loop()
+        _asyncio.set_event_loop(loop)
+        loop.run_until_complete(_nightly_refresh_loop())
+
+    _t = _threading.Thread(target=_refresh_thread, daemon=True, name="kg-refresh")
+    _t.start()
+
     bot.run()

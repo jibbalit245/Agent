@@ -28,6 +28,7 @@ def slugify(name: str) -> str:
 # All tools that agents can be granted access to
 ALL_TOOLS = [
     "knowledge_search",
+    "graph_query",
     "council_consult",
     "long_context_read",
     "web_search",
