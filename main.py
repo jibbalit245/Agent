@@ -101,6 +101,19 @@ from harness.knowledge import graph_db
 # Initialize the graph DB schema (safe no-op if already exists)
 graph_db.init_db()
 
+# Auto-seed from index files if the graph is empty (no API key required)
+try:
+    _gs = graph_db.get_stats()
+    if _gs["entities"] == 0:
+        logger.info("Knowledge graph empty — seeding from index files (no API key required)...")
+        import subprocess as _sp
+        _sp.run(
+            [sys.executable, "scripts/seed_from_index.py"],
+            check=False, capture_output=False,
+        )
+except Exception as _seed_exc:
+    logger.warning("Auto-seed skipped: %s", _seed_exc)
+
 # Wire up the summarize tool with the primary provider
 primary_provider = providers.get(settings.BRAIN_PROVIDER) or next(iter(providers.values()))
 configure_summarize(primary_provider, settings.FAST_MODEL)
