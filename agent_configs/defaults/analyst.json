@@ -9,6 +9,7 @@
   "tools": [
     "knowledge_search",
     "council_consult",
+    "long_context_read",
     "python_exec",
     "web_search",
     "web_fetch",

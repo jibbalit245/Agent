@@ -39,6 +39,17 @@ class Settings:
     FAST_MODEL: str = os.getenv("FAST_MODEL", "claude-haiku-4-5-20251001")
     ROUTER_MODEL: str = os.getenv("ROUTER_MODEL", "claude-haiku-4-5-20251001")
 
+    # Long-context model — Llama 4 Scout (~10M token context window)
+    # Auto-selects provider from what's available (openrouter preferred, then hf).
+    # Override with LONG_CONTEXT_PROVIDER env var.
+    LONG_CONTEXT_PROVIDER: str = os.getenv("LONG_CONTEXT_PROVIDER", "")
+    LONG_CONTEXT_MODEL_OPENROUTER: str = os.getenv(
+        "LONG_CONTEXT_MODEL_OPENROUTER", "meta-llama/llama-4-scout"
+    )
+    LONG_CONTEXT_MODEL_HF: str = os.getenv(
+        "LONG_CONTEXT_MODEL_HF", "meta-llama/Llama-4-Scout-17B-16E-Instruct"
+    )
+
     # OpenRouter metadata
     OPENROUTER_APP_NAME: str = os.getenv("OPENROUTER_APP_NAME", "AgentHarness")
     OPENROUTER_APP_URL: str = os.getenv("OPENROUTER_APP_URL", "https://github.com/agent-harness")

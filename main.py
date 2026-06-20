@@ -88,10 +88,12 @@ import harness.tools.memory_tools     # noqa: F401  registers memory_save, memor
 import harness.tools.summarize        # noqa: F401  registers summarize
 import harness.tools.knowledge_search # noqa: F401  registers knowledge_search
 import harness.tools.council          # noqa: F401  registers council_consult
+import harness.tools.long_context     # noqa: F401  registers long_context_read
 
 from harness.tools.registry import registry as tool_registry
 from harness.tools.summarize import set_provider as configure_summarize
 from harness.tools.council import set_council_providers
+from harness.tools.long_context import set_long_context_provider
 
 # Wire up the summarize tool with the primary provider
 primary_provider = providers.get(settings.BRAIN_PROVIDER) or next(iter(providers.values()))
@@ -100,6 +102,23 @@ configure_summarize(primary_provider, settings.FAST_MODEL)
 # Wire up the council tool with all available providers
 set_council_providers(providers, primary_model=settings.BRAIN_MODEL, fast_model=settings.FAST_MODEL)
 logger.info("Council configured with providers: %s", list(providers.keys()))
+
+# Wire up Llama Scout long-context tool — prefer openrouter, fall back to hf
+_lc_provider_name = settings.LONG_CONTEXT_PROVIDER or (
+    "openrouter" if "openrouter" in providers else
+    "hf" if "hf" in providers else
+    ""
+)
+if _lc_provider_name and _lc_provider_name in providers:
+    _lc_model = (
+        settings.LONG_CONTEXT_MODEL_HF
+        if _lc_provider_name == "hf"
+        else settings.LONG_CONTEXT_MODEL_OPENROUTER
+    )
+    set_long_context_provider(providers[_lc_provider_name], _lc_model)
+    logger.info("Long-context provider: %s / %s", _lc_provider_name, _lc_model)
+else:
+    logger.info("Long-context tool inactive (no openrouter or hf provider configured)")
 
 logger.info("Tools registered: %s", tool_registry.get_names())
 

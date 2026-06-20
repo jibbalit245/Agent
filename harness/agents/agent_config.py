@@ -29,6 +29,7 @@ def slugify(name: str) -> str:
 ALL_TOOLS = [
     "knowledge_search",
     "council_consult",
+    "long_context_read",
     "web_search",
     "web_fetch",
     "python_exec",
