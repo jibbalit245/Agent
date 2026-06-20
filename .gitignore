@@ -3,13 +3,16 @@
 
 # Python
 __pycache__/
-*.pyc
+*.py[cod]
+*$py.class
 *.pyo
 *.pyd
 .Python
 *.egg-info/
 dist/
 build/
+
+# Virtual environments
 .venv/
 venv/
 env/
@@ -22,7 +25,7 @@ env/
 .vscode/
 .idea/
 *.swp
-*.swo
+*~
 
 # OS
 .DS_Store
