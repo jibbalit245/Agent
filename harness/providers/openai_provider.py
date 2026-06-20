@@ -39,19 +39,22 @@ class OpenAIProvider(BaseProvider):
         for m in messages:
             formatted.append({"role": m.role, "content": m.content})
 
+        is_reasoning = any(x in model.lower() for x in ("o1", "o3", "o4"))
+
         kwargs: dict[str, Any] = {
             "model": model,
             "messages": formatted,
-            "max_tokens": max_tokens,
         }
 
-        is_reasoning = any(x in model.lower() for x in ("o1", "o3", "o4"))
-        if not is_reasoning:
+        # o-series reasoning models reject max_tokens/temperature and use
+        # max_completion_tokens + reasoning_effort instead.
+        if is_reasoning:
+            kwargs["max_completion_tokens"] = max_tokens
+            if thinking and thinking.get("enabled"):
+                kwargs["reasoning_effort"] = thinking.get("effort", "high")
+        else:
+            kwargs["max_tokens"] = max_tokens
             kwargs["temperature"] = temperature
-
-        if thinking and thinking.get("enabled") and is_reasoning:
-            effort = thinking.get("effort", "high")
-            kwargs["reasoning_effort"] = effort
 
         if tools:
             kwargs["tools"] = [

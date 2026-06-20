@@ -113,41 +113,49 @@ async def council_consult(
 
     max_tokens = 2048 if depth == "fast" else 4096
 
-    # Build parallel tasks
-    tasks: dict[str, Any] = {}
+    # Each council member is (provider, model) so the right model string always
+    # goes to the right provider — including the single-provider critique path.
+    members: dict[str, tuple[Any, str]] = {}
 
     if "anthropic" in _providers:
-        tasks["Claude"] = _query(_providers["anthropic"], claude_model, system, content, max_tokens)
+        members["Claude"] = (_providers["anthropic"], claude_model)
 
-    # GPT via direct OpenAI if available, else via OpenRouter
+    # GPT via direct OpenAI if available, else via OpenRouter (different model id)
     if "openai" in _providers:
-        tasks["GPT-4o"] = _query(_providers["openai"], gpt_model_direct, system, content, max_tokens)
+        members["GPT-4o"] = (_providers["openai"], gpt_model_direct)
     elif "openrouter" in _providers:
-        tasks["GPT-4o"] = _query(_providers["openrouter"], gpt_model, system, content, max_tokens)
+        members["GPT-4o"] = (_providers["openrouter"], gpt_model)
 
-    if not tasks:
-        return "Council unavailable: need anthropic and/or openrouter/openai providers."
+    # Fall back to any remaining provider (e.g. HF-only) so council still runs
+    if not members and _providers:
+        name, provider = next(iter(_providers.items()))
+        members[name] = (provider, claude_model if name == "anthropic" else _fast_model)
 
-    if len(tasks) == 1:
-        # Only one model available — do a self-critique loop instead
-        name, coro = next(iter(tasks.items()))
-        first_answer = await coro
+    if not members:
+        return "Council unavailable: no providers configured."
+
+    if len(members) == 1:
+        # Only one model available — do a self-critique loop with that same model.
+        name, (provider, model) = next(iter(members.items()))
+        first_answer = await _query(provider, model, system, content, max_tokens)
         critique_content = (
             f"Original question: {question}\n\n"
             f"Your initial answer:\n{first_answer}\n\n"
             "Now critique this answer: What did you get right? What might be wrong or incomplete? "
             "What would a skeptical expert challenge? Give a revised, stronger answer."
         )
-        revised = await _query(
-            next(iter(_providers.values())), claude_model, system, critique_content, max_tokens
-        )
+        revised = await _query(provider, model, system, critique_content, max_tokens)
         return (
             f"## Initial Analysis\n{first_answer}\n\n"
             f"---\n\n"
             f"## Self-Critique & Revision\n{revised}"
         )
 
-    # Run both in parallel
+    # Run all members in parallel
+    tasks = {
+        name: _query(provider, model, system, content, max_tokens)
+        for name, (provider, model) in members.items()
+    }
     results_list = await asyncio.gather(*tasks.values(), return_exceptions=True)
     results = {}
     for name, result in zip(tasks.keys(), results_list):

@@ -32,12 +32,18 @@ class Message:
     For native tool use:
       - assistant message may carry `tool_calls` list
       - tool result message carries `tool_call_id` and `tool_name`
+
+    `raw_content` optionally holds the provider's native content blocks for an
+    assistant turn (e.g. Anthropic thinking/tool_use blocks). When present it is
+    replayed verbatim, which is required to preserve signed extended-thinking
+    blocks across tool-use turns.
     """
     role: str
     content: str = ""
     tool_calls: list[dict[str, Any]] = field(default_factory=list)
     tool_call_id: str | None = None
     tool_name: str | None = None
+    raw_content: list[dict[str, Any]] | None = None
 
 
 class BaseProvider(ABC):

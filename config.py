@@ -64,10 +64,15 @@ class Settings:
             errors.append("OPENROUTER_API_KEY is required when BRAIN_PROVIDER=openrouter")
         if self.BRAIN_PROVIDER == "hf" and not self.HF_TOKEN:
             errors.append("HF_TOKEN is required when BRAIN_PROVIDER=hf")
+        if self.BRAIN_PROVIDER == "openai" and not self.OPENAI_API_KEY:
+            errors.append("OPENAI_API_KEY is required when BRAIN_PROVIDER=openai")
         if self.BRAIN_MODE not in ("native", "tags"):
             errors.append(f"BRAIN_MODE must be 'native' or 'tags', got: {self.BRAIN_MODE!r}")
-        if self.BRAIN_PROVIDER not in ("anthropic", "openrouter", "hf"):
-            errors.append(f"BRAIN_PROVIDER must be 'anthropic', 'openrouter', or 'hf', got: {self.BRAIN_PROVIDER!r}")
+        valid_providers = ("anthropic", "openrouter", "openai", "hf")
+        if self.BRAIN_PROVIDER not in valid_providers:
+            errors.append(
+                f"BRAIN_PROVIDER must be one of {valid_providers}, got: {self.BRAIN_PROVIDER!r}"
+            )
         return errors
 
 

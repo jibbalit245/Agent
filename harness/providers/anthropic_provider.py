@@ -45,8 +45,14 @@ class AnthropicProvider(BaseProvider):
                         }
                     ],
                 })
+            elif msg.role == "assistant" and msg.raw_content:
+                # Replay the provider's original content blocks verbatim. This
+                # preserves signed thinking blocks, which Anthropic requires on
+                # any assistant turn that contains tool_use when extended
+                # thinking is enabled.
+                result.append({"role": "assistant", "content": msg.raw_content})
             elif msg.role == "assistant" and msg.tool_calls:
-                # Assistant message with tool calls
+                # Assistant message with tool calls (no raw blocks available)
                 content: list[dict] = []
                 if msg.content:
                     content.append({"type": "text", "text": msg.content})
@@ -115,21 +121,43 @@ class AnthropicProvider(BaseProvider):
 
         response = await self.client.messages.create(**kwargs)
 
-        # Normalize response — collect text, thinking, and tool_use blocks
+        # Normalize response — collect text, thinking, and tool_use blocks.
+        # Also serialize every block into raw_content so it can be replayed
+        # verbatim on the next turn (required to keep signed thinking blocks
+        # valid across tool use).
         text_parts: list[str] = []
         thinking_parts: list[str] = []
         tool_calls: list[dict] = []
+        raw_content: list[dict] = []
 
         for block in response.content:
             if block.type == "text":
                 text_parts.append(block.text)
+                raw_content.append({"type": "text", "text": block.text})
             elif block.type == "thinking":
                 thinking_parts.append(getattr(block, "thinking", ""))
+                raw_content.append({
+                    "type": "thinking",
+                    "thinking": getattr(block, "thinking", ""),
+                    "signature": getattr(block, "signature", ""),
+                })
+            elif block.type == "redacted_thinking":
+                raw_content.append({
+                    "type": "redacted_thinking",
+                    "data": getattr(block, "data", ""),
+                })
             elif block.type == "tool_use":
+                arguments = block.input if isinstance(block.input, dict) else json.loads(block.input)
                 tool_calls.append({
                     "id": block.id,
                     "name": block.name,
-                    "arguments": block.input if isinstance(block.input, dict) else json.loads(block.input),
+                    "arguments": arguments,
+                })
+                raw_content.append({
+                    "type": "tool_use",
+                    "id": block.id,
+                    "name": block.name,
+                    "input": arguments,
                 })
 
         stop_reason_map = {
@@ -143,6 +171,7 @@ class AnthropicProvider(BaseProvider):
         return {
             "text": "".join(text_parts),
             "thinking": "".join(thinking_parts),  # exposes chain-of-thought if caller wants it
+            "raw_content": raw_content,           # verbatim blocks for replay across tool use
             "tool_calls": tool_calls,
             "stop_reason": stop_reason,
             "usage": {

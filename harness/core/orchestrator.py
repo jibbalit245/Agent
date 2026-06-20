@@ -151,7 +151,9 @@ class Orchestrator:
 
             # Execute all tool calls in this response
             if self.brain.mode == "native":
-                # In native mode: append assistant message with tool_calls, then tool results
+                # In native mode: append assistant message with tool_calls, then tool results.
+                # Carry raw_content (provider's native blocks) when available so signed
+                # thinking blocks survive the round-trip — Anthropic requires this.
                 messages.append(Message(
                     role="assistant",
                     content=text,
@@ -159,6 +161,7 @@ class Orchestrator:
                         {"id": tc.get("id", f"call_{i}"), "name": tc["name"], "arguments": tc["arguments"]}
                         for i, tc in enumerate(tool_calls)
                     ],
+                    raw_content=response.get("raw_content"),
                 ))
 
                 for tc in tool_calls:
