@@ -1,138 +1,77 @@
-# Replit Overview & Quickstart
-> Source: https://docs.replit.com/getting-started/intro-replit
-> Fetched: 2026-06-20
+# Replit Overview
+
+> Source: https://docs.replit.com/ (403 Forbidden — content compiled from search results and related sources)
+> Last updated: 2026-06
 
 ## What is Replit?
 
-Replit is a browser-based collaborative development environment (IDE) and cloud platform that enables developers to write, run, and deploy code entirely in the browser — no local setup required. It serves more than 20 million users and supports virtually any programming language.
+Replit is an AI-powered cloud development platform that allows developers to build, run, and deploy applications entirely in the browser without any local setup. It provides an integrated development environment (IDE) with AI assistance, collaboration features, cloud storage, and one-click deployment.
 
-Key capabilities:
-- **Browser-based IDE**: Full code editor with syntax highlighting, autocomplete, and debugging
-- **Instant execution**: Run code immediately without local installation
-- **Built-in deployment**: Deploy applications with one click
-- **Collaboration**: Real-time multiplayer coding (like Google Docs for code)
-- **AI-powered development**: Replit Agent builds, runs, and deploys apps from natural language prompts
+## Core Concepts
 
-Replit is particularly popular for:
-- Rapid prototyping and demos
-- Learning and teaching programming
-- Building and deploying web applications and APIs
-- AI-powered app development
-- Full-stack applications in a single workspace
+### Repls / Replit Apps
+A **Repl** (or Replit App) is your project workspace that includes your code, files, packages, and everything you need to build and run apps — all bundled together in the cloud. Each Repl comes with:
+- A file system
+- Terminal/Shell access
+- Package manager
+- Web preview
+- Database access
+- Object storage
 
-## Account Setup
+### Key Features
 
-1. Go to [https://replit.com](https://replit.com)
-2. Sign up with Google, GitHub, or email
-3. Free "Starter" account is created automatically
-4. Optionally upgrade to **Core** ($20/month) or **Pro** for advanced features
+- **Browser-based IDE**: No local installation required. Full development environment in the browser.
+- **AI Agent**: Replit Agent can plan, implement, run, test, and deploy apps in a conversational loop inside Replit's workspace.
+- **Multiplayer Collaboration**: Real-time collaboration with multiple users working on the same Repl simultaneously.
+- **One-click Deployments**: Deploy apps with a single click to Autoscale, Reserved VM, Static, Scheduled, or Background Worker deployments.
+- **Built-in Database**: Every Repl includes a Key-Value Store (Replit DB) and access to PostgreSQL.
+- **Object Storage**: Store and manage unstructured data like media files and documents.
+- **GitHub Integration**: Clone repositories directly, make changes, and push back to GitHub.
+- **Nix-based Environments**: All Repls are powered by Nix for reproducible, declarative environments.
 
-## Workspace Concepts
+## Platform Architecture
 
-### Repl
-A **Repl** is a single project — it contains your code, a console/shell, file system, and a URL. Each Repl runs as a Linux container.
+Replit Apps are configured with two primary files:
+- **`.replit`** — Controls how the app runs (run command, entrypoint, ports, env vars, deployment settings)
+- **`replit.nix`** — Defines system-level packages and environment using Nix
 
-### Template
-Start from pre-configured templates for common stacks: Python, Node.js, React, Next.js, Flask, Django, etc.
+## Deployment Options
 
-### Nix Environment
-Replit uses Nix for package management. Each Repl has a `replit.nix` or `.nix` configuration file that specifies system-level dependencies.
+| Type | Use Case | Pricing |
+|------|----------|---------|
+| Autoscale | Web apps with variable traffic | Pay-per-use (Compute Units) |
+| Reserved VM | Always-on apps with steady traffic | Fixed monthly |
+| Static | HTML/CSS/JS sites | Pay for data transfer |
+| Scheduled | Cron/periodic tasks | Pay per run |
+| Background Worker | Long-running processes | Compute Units |
 
-## Creating a New Project
+## AI Features
 
-### Via UI
-1. Click **"+ Create Repl"** (or the blue "+" button)
-2. Choose a template or select "Blank Repl"
-3. Name your project
-4. Click **"Create Repl"**
+- **Replit Agent**: End-to-end app builder that can plan, write, run, test, and deploy apps
+- **Replit Assistant**: AI coding assistant for inline suggestions and completions
+- **Fast Mode**: Quicker AI generations for rapid prototyping
+- **Figma Import**: Convert Figma designs directly into working code at replit.com/import
+- **ChatGPT Integration**: Build apps directly from ChatGPT conversations (launched Dec 2025)
 
-### Via Replit Agent
-1. Click **"+ Create Repl"**
-2. Describe what you want to build in natural language (e.g., "Build a Flask API that returns weather data")
-3. Replit Agent scaffolds the project, installs dependencies, and launches the app automatically
+## Plans Overview
 
-### Importing from GitHub
-1. Click **"+ Create Repl"** → "Import from GitHub"
-2. Paste a GitHub URL
-3. Replit clones the repo and creates a Repl from it
-4. Supports imports from Bolt, Lovable, and GitHub
+| Plan | Price | Target |
+|------|-------|--------|
+| Starter | Free | Individuals/learning |
+| Core | $25/month ($20/yr) | Individual developers |
+| Pro | $100/month (up to 15 builders) | Teams |
+| Enterprise | Custom pricing | Organizations |
 
-## Replit AI Agent
+## Recent Updates (2025-2026)
 
-Replit's AI Agent (2025 version: Agent v2) is a fully autonomous coding assistant that:
+- **December 2025**: New free Starter Plan launched; ChatGPT integration; Fast Mode
+- **February 2026**: Pro plan launched (replaces Teams); Core plan updated; pricing overhaul
+- **2025**: Figma import; Agent v2 with near-instant interactions; PostgreSQL database preview
+- **2025**: Object Storage introduced for unstructured data
 
-### What It Does
-- Builds complete applications from a text prompt
-- Writes, runs, and debugs code iteratively
-- Installs required packages and configures the environment
-- Deploys the finished app to a live URL
-- Generates basic visuals and UI components (as of August 2025)
+## Resources
 
-### Agent v2 Features (2025)
-- More autonomous runtime — handles multi-step tasks without constant confirmation
-- Real-time app design preview as the agent builds
-- Supports importing and continuing projects from Bolt or Lovable (via GitHub)
-- Integration with ChatGPT: tag `@replit` in ChatGPT to build Repls without leaving ChatGPT
-
-### Using the Agent
-1. Open a Repl or create a new one
-2. In the chat panel (Replit AI), type a description of what you want
-3. The agent plans, codes, tests, and runs the app
-4. Review progress via checkpoints and the preview panel
-5. Iterate by asking follow-up prompts
-
-### Agent Credits
-- Free (Starter) tier: daily AI credits; limited Agent checkpoints (~10/month)
-- Core plan: more credits, higher checkpoint limits
-- Pro/Enterprise: highest limits
-
-## The Replit Workspace
-
-```
-┌─────────────────────────────────────────────────────┐
-│  File Tree │  Code Editor      │  Preview / Output  │
-│            │                   │                    │
-│  📁 src/   │  app.py           │  [Live Preview]    │
-│  📄 main.py│  ...code...       │                    │
-│  📄 .env   │                   │  Console Output    │
-│            │                   │                    │
-├────────────┴───────────────────┴────────────────────┤
-│  Shell / Console                                     │
-│  $ python main.py                                    │
-└─────────────────────────────────────────────────────┘
-```
-
-Key workspace panels:
-- **Files**: File tree for the project
-- **Editor**: Main code editor (Monaco-based)
-- **Console**: Shell access and program output
-- **Preview**: Live URL preview of web apps
-- **Tools**: Secrets, Packages, Git, Deploy, etc.
-
-## Supported Languages and Frameworks
-
-Virtually any language that runs on Linux, including:
-- Python (Flask, FastAPI, Django)
-- JavaScript/TypeScript (Node.js, Express, Next.js, React)
-- Java, C++, C#, Go, Ruby, Rust
-- HTML/CSS (static sites)
-- Bash, SQL
-
-## Collaboration Features
-
-- **Multiplayer**: Share a Repl link and collaborators can edit in real time
-- **Comments**: Inline code comments
-- **History**: Basic version history
-
-## Package Management
-
-- Python: pip/uv (packages installed to the Repl environment)
-- Node.js: npm/yarn
-- System packages: Nix (via `replit.nix`)
-
-## References
-
-- [Replit Docs](https://docs.replit.com)
-- [Replit AI Agent](https://replit.com/ai)
-- [Replit Blog: 2025 in Review](https://blog.replit.com/2025-replit-in-review)
-- [Replit Agent Features](https://refine.dev/blog/replit-ai-agent/)
+- Documentation: https://docs.replit.com/
+- Pricing: https://replit.com/pricing
+- Blog: https://blog.replit.com/
+- Enterprise: https://replit.com/enterprise
