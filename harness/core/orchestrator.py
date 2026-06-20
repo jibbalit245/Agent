@@ -77,11 +77,14 @@ class Orchestrator:
         tool_registry: ToolRegistry,
         max_iterations: int = 10,
         system_prompt: str = _DEFAULT_SYSTEM,
+        enabled_tools: list[str] | None = None,
     ) -> None:
         self.brain = brain
         self.tool_registry = tool_registry
         self.max_iterations = max_iterations
         self.system_prompt = system_prompt
+        # None means all tools; a list restricts to that subset
+        self.enabled_tools: list[str] | None = enabled_tools
         # Inject system into brain
         self.brain.system_prompt = system_prompt
 
@@ -100,7 +103,7 @@ class Orchestrator:
         """
         # Build working message list for this turn
         messages: list[Message] = list(history) + [Message(role="user", content=user_message)]
-        tools: list[ToolDefinition] = self.tool_registry.get_definitions()
+        tools: list[ToolDefinition] = self.tool_registry.get_definitions(subset=self.enabled_tools)
 
         iteration = 0
         all_tool_calls: list[dict[str, Any]] = []

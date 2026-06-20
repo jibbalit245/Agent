@@ -1,147 +1,132 @@
 """
-Agent Harness - Main Entry Point
+Agent Harness — main entry point.
 
-Wires together all components and starts the Telegram bot gateway.
+Wires together:
+  - Configuration (from .env)
+  - Providers (Anthropic / OpenRouter / HuggingFace)
+  - Tool registry (web, python, memory, summarize)
+  - Agent registry (loads configs from agent_configs/)
+  - Agent manager (creates sessions from configs)
+  - Telegram gateway (dispatches messages, handles agent commands)
 
 Run with:
     python main.py
-
-Environment variables (see .env.example):
-    TELEGRAM_BOT_TOKEN, ANTHROPIC_API_KEY / OPENROUTER_API_KEY,
-    BRAIN_PROVIDER, BRAIN_MODEL, BRAIN_MODE, FAST_MODEL, etc.
 """
 
-import asyncio
 import logging
 import sys
+from pathlib import Path
 
 from config import settings
 
+# ── Logging setup ──────────────────────────────────────────────────
+logging.basicConfig(
+    level=getattr(logging, settings.LOG_LEVEL.upper(), logging.INFO),
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    datefmt="%H:%M:%S",
+    stream=sys.stdout,
+)
+# Reduce noise from third-party libraries
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
+logging.getLogger("telegram").setLevel(logging.WARNING)
+logging.getLogger("anthropic").setLevel(logging.WARNING)
 
-def setup_logging() -> None:
-    """Configure structured logging."""
-    level = getattr(logging, settings.LOG_LEVEL.upper(), logging.INFO)
-    logging.basicConfig(
-        level=level,
-        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-        stream=sys.stdout,
-    )
-    # Reduce noise from third-party libraries
-    logging.getLogger("httpx").setLevel(logging.WARNING)
-    logging.getLogger("httpcore").setLevel(logging.WARNING)
-    logging.getLogger("telegram").setLevel(logging.WARNING)
-    logging.getLogger("openai").setLevel(logging.WARNING)
-    logging.getLogger("anthropic").setLevel(logging.WARNING)
+logger = logging.getLogger(__name__)
 
+# ── Validate config ────────────────────────────────────────────────
+errors = settings.validate()
+if errors:
+    for err in errors:
+        logger.error("Config error: %s", err)
+    sys.exit(1)
 
-def build_provider():
-    """Instantiate the configured AI provider."""
+# ── Providers ──────────────────────────────────────────────────────
+from harness.providers.base import BaseProvider
+
+providers: dict[str, BaseProvider] = {}
+
+if settings.ANTHROPIC_API_KEY:
     from harness.providers.anthropic_provider import AnthropicProvider
-    from harness.providers.openrouter import OpenRouterProvider
+    providers["anthropic"] = AnthropicProvider(api_key=settings.ANTHROPIC_API_KEY)
+    logger.info("Anthropic provider initialized")
 
-    provider_name = settings.BRAIN_PROVIDER
-    if provider_name == "anthropic":
-        if not settings.ANTHROPIC_API_KEY:
-            raise RuntimeError("ANTHROPIC_API_KEY is required for provider=anthropic")
-        return AnthropicProvider(api_key=settings.ANTHROPIC_API_KEY)
-    elif provider_name == "openrouter":
-        if not settings.OPENROUTER_API_KEY:
-            raise RuntimeError("OPENROUTER_API_KEY is required for provider=openrouter")
-        return OpenRouterProvider(
+if settings.OPENROUTER_API_KEY:
+    try:
+        from harness.providers.openrouter_provider import OpenRouterProvider
+        providers["openrouter"] = OpenRouterProvider(
             api_key=settings.OPENROUTER_API_KEY,
             app_name=settings.OPENROUTER_APP_NAME,
             app_url=settings.OPENROUTER_APP_URL,
         )
-    else:
-        raise RuntimeError(f"Unknown BRAIN_PROVIDER: {provider_name!r}. Use 'anthropic' or 'openrouter'.")
+        logger.info("OpenRouter provider initialized")
+    except ImportError:
+        logger.warning("OpenRouter provider not available (missing module)")
 
+if settings.HF_TOKEN:
+    from harness.providers.huggingface_provider import HuggingFaceProvider
+    providers["hf"] = HuggingFaceProvider(api_key=settings.HF_TOKEN)
+    logger.info("HuggingFace provider initialized")
 
-def build_orchestrator(provider):
-    """Build the full orchestrator with all tools registered."""
-    from harness.core.brain import Brain
-    from harness.core.orchestrator import Orchestrator
-    from harness.tools.registry import build_default_registry
+if not providers:
+    logger.error("No providers configured. Set ANTHROPIC_API_KEY, OPENROUTER_API_KEY, or HF_TOKEN.")
+    sys.exit(1)
 
-    brain = Brain(
-        provider=provider,
-        model=settings.BRAIN_MODEL,
-        mode=settings.BRAIN_MODE,
-    )
+# ── Tool registry ──────────────────────────────────────────────────
+# Import tool modules — side-effects register tools into the global registry
+import harness.tools.web           # noqa: F401  registers web_search, web_fetch
+import harness.tools.python_exec   # noqa: F401  registers python_exec
+import harness.tools.memory_tools  # noqa: F401  registers memory_save, memory_load
+import harness.tools.summarize     # noqa: F401  registers summarize
 
-    tool_registry = build_default_registry(
-        brain_provider=provider,
-        fast_model=settings.FAST_MODEL,
-        memory_dir=str(settings.MEMORY_DIR),
-    )
+from harness.tools.registry import registry as tool_registry
+from harness.tools.summarize import set_provider as configure_summarize
 
-    orchestrator = Orchestrator(
-        brain=brain,
-        tool_registry=tool_registry,
-        max_iterations=settings.MAX_ITERATIONS,
-    )
+# Wire up the summarize tool with the primary provider
+primary_provider = providers.get(settings.BRAIN_PROVIDER) or next(iter(providers.values()))
+configure_summarize(primary_provider, settings.FAST_MODEL)
 
-    return orchestrator
+logger.info("Tools registered: %s", tool_registry.get_names())
 
+# ── Agent registry ──────────────────────────────────────────────────
+from harness.agents.agent_registry import AgentRegistry
 
-def build_router(provider):
-    """Build the request router (optional - returns None on failure)."""
-    try:
-        from harness.core.router import Router
-        return Router(
-            provider=provider,
-            router_model=settings.ROUTER_MODEL,
-            brain_model=settings.BRAIN_MODEL,
-            fast_model=settings.FAST_MODEL,
-        )
-    except Exception as exc:
-        logging.getLogger(__name__).warning("Failed to build router: %s", exc)
-        return None
+agent_registry = AgentRegistry(configs_dir=Path("agent_configs"))
+logger.info("Agents loaded: %d", agent_registry.count())
 
+if agent_registry.count() == 0:
+    logger.warning("No agents found. Make sure agent_configs/defaults/ exists.")
 
-async def main() -> None:
-    """Main async entry point."""
-    setup_logging()
-    logger = logging.getLogger(__name__)
+# ── Agent manager ──────────────────────────────────────────────────
+from harness.agents.agent_manager import AgentManager
 
-    logger.info("Agent Harness starting up")
-    logger.info("Provider: %s | Model: %s | Mode: %s", settings.BRAIN_PROVIDER, settings.BRAIN_MODEL, settings.BRAIN_MODE)
+# Pick the default agent (researcher if available, else first in list)
+default_agent_id: str | None = None
+if agent_registry.exists("researcher"):
+    default_agent_id = "researcher"
+elif agent_registry.list_agents():
+    default_agent_id = agent_registry.list_agents()[0].id
 
-    # Validate configuration
-    errors = settings.validate()
-    if errors:
-        for err in errors:
-            logger.error("Config error: %s", err)
-        sys.exit(1)
+agent_manager = AgentManager(
+    registry=agent_registry,
+    tool_registry=tool_registry,
+    providers=providers,
+    default_agent_id=default_agent_id,
+)
+logger.info("Agent manager ready. Default agent: %s", default_agent_id)
 
-    # Build components
-    provider = build_provider()
-    logger.info("Provider initialized: %s", type(provider).__name__)
+# ── Telegram gateway ────────────────────────────────────────────────
+from harness.gateways.telegram import TelegramBot
 
-    orchestrator = build_orchestrator(provider)
-    logger.info("Orchestrator ready with tools: %s", orchestrator.tool_registry.list_tools())
+bot = TelegramBot(
+    token=settings.TELEGRAM_BOT_TOKEN,
+    agent_manager=agent_manager,
+    agent_registry=agent_registry,
+    memory_dir=settings.MEMORY_DIR,
+)
 
-    router = build_router(provider)
-    if router:
-        logger.info("Router initialized")
-
-    # Start Telegram gateway
-    from harness.gateways.telegram import TelegramGateway
-    gateway = TelegramGateway(
-        token=settings.TELEGRAM_BOT_TOKEN,
-        orchestrator=orchestrator,
-        router=router,
-        settings=settings,
-    )
-
-    try:
-        await gateway.run()
-    except KeyboardInterrupt:
-        logger.info("Shutting down")
-    except Exception as exc:
-        logger.critical("Fatal error: %s", exc, exc_info=True)
-        sys.exit(1)
-
-
+# ── Start ──────────────────────────────────────────────────────────
 if __name__ == "__main__":
-    asyncio.run(main())
+    logger.info("Starting Agent Harness...")
+    settings.MEMORY_DIR.mkdir(parents=True, exist_ok=True)
+    bot.run()

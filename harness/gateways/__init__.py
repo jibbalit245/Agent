@@ -1,1 +1,1 @@
-"""Gateways: external interfaces for the agent harness."""
+"""Gateways package — external interfaces (Telegram, etc.)."""

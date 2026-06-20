@@ -20,11 +20,19 @@ class Settings:
     # Provider API keys
     ANTHROPIC_API_KEY: str = os.getenv("ANTHROPIC_API_KEY", "")
     OPENROUTER_API_KEY: str = os.getenv("OPENROUTER_API_KEY", "")
+    HF_TOKEN: str = os.getenv("HF_TOKEN", "")
 
     # Brain configuration
-    BRAIN_PROVIDER: str = os.getenv("BRAIN_PROVIDER", "anthropic")  # anthropic | openrouter
+    BRAIN_PROVIDER: str = os.getenv("BRAIN_PROVIDER", "anthropic")  # anthropic | openrouter | hf
     BRAIN_MODEL: str = os.getenv("BRAIN_MODEL", "claude-sonnet-4-6")
     BRAIN_MODE: str = os.getenv("BRAIN_MODE", "native")  # native | tags
+
+    # HuggingFace Inference Router
+    HF_DEFAULT_MODEL: str = os.getenv(
+        "HF_DEFAULT_MODEL",
+        "huihui-ai/DeepSeek-R1-Distill-Qwen-32B-abliterated:featherless-ai",
+    )
+    HUGGINGFACE_BASE_URL: str = "https://router.huggingface.co/v1"
 
     # Auxiliary models
     FAST_MODEL: str = os.getenv("FAST_MODEL", "claude-haiku-4-5-20251001")
@@ -53,10 +61,12 @@ class Settings:
             errors.append("ANTHROPIC_API_KEY is required when BRAIN_PROVIDER=anthropic")
         if self.BRAIN_PROVIDER == "openrouter" and not self.OPENROUTER_API_KEY:
             errors.append("OPENROUTER_API_KEY is required when BRAIN_PROVIDER=openrouter")
+        if self.BRAIN_PROVIDER == "hf" and not self.HF_TOKEN:
+            errors.append("HF_TOKEN is required when BRAIN_PROVIDER=hf")
         if self.BRAIN_MODE not in ("native", "tags"):
             errors.append(f"BRAIN_MODE must be 'native' or 'tags', got: {self.BRAIN_MODE!r}")
-        if self.BRAIN_PROVIDER not in ("anthropic", "openrouter"):
-            errors.append(f"BRAIN_PROVIDER must be 'anthropic' or 'openrouter', got: {self.BRAIN_PROVIDER!r}")
+        if self.BRAIN_PROVIDER not in ("anthropic", "openrouter", "hf"):
+            errors.append(f"BRAIN_PROVIDER must be 'anthropic', 'openrouter', or 'hf', got: {self.BRAIN_PROVIDER!r}")
         return errors
 
 
