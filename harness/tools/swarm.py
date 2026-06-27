@@ -46,7 +46,15 @@ def set_swarm_provider(provider: Any, model: str, default_max_agents: int = 50) 
         "result. Use this for jobs that genuinely benefit from parallel decomposition: "
         "broad research sweeps, large refactors, multi-document analysis, build-out tasks "
         "with many independent parts. For a single focused question, answer directly or "
-        "use council_consult instead — the swarm shines on breadth, not on one hard step."
+        "use council_consult instead — the swarm shines on breadth, not on one hard step.\n\n"
+        "CRITICAL: the swarm is garbage-sensitive. A vague `task` makes it spawn "
+        "overlapping, conflicting sub-agents and the output is mush. ALWAYS pass a "
+        "STRUCTURED BRIEF as `task`, containing: (1) one clear Objective; (2) the exact "
+        "Final Deliverable format; (3) Shared Context all sub-agents need; (4) explicitly "
+        "named, independent Parallelizable Work Units, each with scope/input/output; "
+        "(5) how the units integrate; (6) constraints & success criteria. Set `max_agents` "
+        "to roughly the number of independent work units. If you can't name the independent "
+        "units, the task isn't swarm-shaped — don't use this tool."
     ),
     parameters={
         "type": "object",
