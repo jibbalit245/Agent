@@ -34,13 +34,17 @@ class Settings:
     FAST_MODEL: str = os.getenv("FAST_MODEL", "claude-haiku-4-5-20251001")
     ROUTER_MODEL: str = os.getenv("ROUTER_MODEL", "claude-haiku-4-5-20251001")
 
-    # Long-context model — Kimi K2 (~256K token context window)
+    # Long-context model — Kimi K2.6 (256K token context window)
     # Provider must be "moonshot" (the only large-context provider in this set).
-    LONG_CONTEXT_MODEL: str = os.getenv("LONG_CONTEXT_MODEL", "kimi-k2-0711-preview")
+    LONG_CONTEXT_MODEL: str = os.getenv("LONG_CONTEXT_MODEL", "kimi-k2.6")
 
     # Council member model overrides (used by council_consult)
     COUNCIL_GPT_MODEL: str = os.getenv("COUNCIL_GPT_MODEL", "gpt-4o")
-    COUNCIL_KIMI_MODEL: str = os.getenv("COUNCIL_KIMI_MODEL", "kimi-k2-0711-preview")
+    COUNCIL_KIMI_MODEL: str = os.getenv("COUNCIL_KIMI_MODEL", "kimi-k2.6")
+
+    # Kimi K2.6 Agent Swarm (server-side multi-agent decomposition)
+    SWARM_MODEL: str = os.getenv("SWARM_MODEL", "kimi-k2.6")
+    SWARM_MAX_AGENTS: int = int(os.getenv("SWARM_MAX_AGENTS", "50"))  # default budget; hard cap 300
 
     # Agentic loop limits
     MAX_ITERATIONS: int = int(os.getenv("MAX_ITERATIONS", "10"))

@@ -11,6 +11,7 @@
     "graph_query",
     "council_consult",
     "long_context_read",
+    "swarm_solve",
     "python_exec",
     "web_search",
     "web_fetch",

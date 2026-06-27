@@ -31,6 +31,7 @@ ALL_TOOLS = [
     "graph_query",
     "council_consult",
     "long_context_read",
+    "swarm_solve",
     "web_search",
     "web_fetch",
     "python_exec",

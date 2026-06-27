@@ -83,12 +83,14 @@ import harness.tools.summarize        # noqa: F401  registers summarize
 import harness.tools.knowledge_search # noqa: F401  registers knowledge_search
 import harness.tools.council          # noqa: F401  registers council_consult
 import harness.tools.long_context     # noqa: F401  registers long_context_read
+import harness.tools.swarm            # noqa: F401  registers swarm_solve
 import harness.tools.graph_query      # noqa: F401  registers graph_query
 
 from harness.tools.registry import registry as tool_registry
 from harness.tools.summarize import set_provider as configure_summarize
 from harness.tools.council import set_council_providers
 from harness.tools.long_context import set_long_context_provider
+from harness.tools.swarm import set_swarm_provider
 from harness.knowledge.extractor import set_extractor_provider
 from harness.knowledge import graph_db
 
@@ -131,12 +133,14 @@ set_extractor_provider(
 )
 logger.info("Knowledge graph extractor ready (fast=%s, deep=%s)", settings.FAST_MODEL, settings.BRAIN_MODEL)
 
-# Wire up Kimi long-context tool — Moonshot is the large-context provider
+# Wire up Kimi long-context + swarm tools — Moonshot provides both
 if "moonshot" in providers:
     set_long_context_provider(providers["moonshot"], settings.LONG_CONTEXT_MODEL)
     logger.info("Long-context provider: moonshot / %s", settings.LONG_CONTEXT_MODEL)
+    set_swarm_provider(providers["moonshot"], settings.SWARM_MODEL, settings.SWARM_MAX_AGENTS)
+    logger.info("Swarm provider: moonshot / %s (max_agents=%d)", settings.SWARM_MODEL, settings.SWARM_MAX_AGENTS)
 else:
-    logger.info("Long-context tool inactive (no Moonshot provider configured)")
+    logger.info("Long-context and swarm tools inactive (no Moonshot provider configured)")
 
 # Log graph stats at startup if the DB is populated
 try:

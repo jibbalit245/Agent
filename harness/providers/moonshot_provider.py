@@ -103,8 +103,16 @@ class MoonshotProvider(BaseProvider):
         temperature: float = 0.7,
         max_tokens: int = 4096,
         thinking: dict | None = None,
+        extra_body: dict | None = None,
     ) -> dict[str, Any]:
-        """Run inference via Moonshot and return a normalized response."""
+        """
+        Run inference via Moonshot and return a normalized response.
+
+        `extra_body` is passed straight through to the OpenAI SDK, which injects
+        it into the request JSON. This is how Kimi-specific features are enabled:
+          - Agent Swarm:   {"swarm": {"max_agents": N}}   (N in 1..300)
+          - Instant mode:  {"chat_template_kwargs": {"thinking": False}}
+        """
         api_messages = self._convert_messages(messages, system)
         api_tools = self._convert_tools(tools) if tools else []
 
@@ -117,10 +125,12 @@ class MoonshotProvider(BaseProvider):
         if api_tools:
             kwargs["tools"] = api_tools
             kwargs["tool_choice"] = "auto"
+        if extra_body:
+            kwargs["extra_body"] = extra_body
 
         logger.debug(
-            "Moonshot request: model=%s, messages=%d, tools=%d",
-            model, len(api_messages), len(api_tools),
+            "Moonshot request: model=%s, messages=%d, tools=%d, extra_body=%s",
+            model, len(api_messages), len(api_tools), bool(extra_body),
         )
 
         response = await self.client.chat.completions.create(**kwargs)
