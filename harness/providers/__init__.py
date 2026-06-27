@@ -1,13 +1,11 @@
-"""Model providers: Anthropic, OpenRouter, OpenAI, and HuggingFace."""
+"""Model providers: Anthropic, OpenAI, and Moonshot (Kimi)."""
 
 from harness.providers.anthropic_provider import AnthropicProvider
-from harness.providers.openrouter_provider import OpenRouterProvider
 from harness.providers.openai_provider import OpenAIProvider
-from harness.providers.huggingface_provider import HuggingFaceProvider
+from harness.providers.moonshot_provider import MoonshotProvider
 
 __all__ = [
     "AnthropicProvider",
-    "OpenRouterProvider",
     "OpenAIProvider",
-    "HuggingFaceProvider",
+    "MoonshotProvider",
 ]

@@ -1,7 +1,7 @@
 """
-council_consult — query Claude + GPT-4o in parallel, return both perspectives.
+council_consult — query Claude + GPT-4o + Kimi in parallel, return all perspectives.
 
-The calling agent (usually Claude) naturally synthesizes the two views.
+The calling agent (usually Claude) naturally synthesizes the views.
 This gives every agent access to cross-model reasoning without the user
 having to orchestrate it manually.
 
@@ -21,18 +21,24 @@ logger = logging.getLogger(__name__)
 _providers: dict = {}
 _primary_model: str = "claude-sonnet-4-6"
 _fast_model: str = "claude-haiku-4-5-20251001"
+_gpt_model: str = "gpt-4o"
+_kimi_model: str = "kimi-k2-0711-preview"
 
 
 def set_council_providers(
     providers: dict,
     primary_model: str = "claude-sonnet-4-6",
     fast_model: str = "claude-haiku-4-5-20251001",
+    gpt_model: str = "gpt-4o",
+    kimi_model: str = "kimi-k2-0711-preview",
 ) -> None:
-    """Called once at startup to wire in the available providers."""
-    global _providers, _primary_model, _fast_model
+    """Called once at startup to wire in the available providers and member models."""
+    global _providers, _primary_model, _fast_model, _gpt_model, _kimi_model
     _providers = providers
     _primary_model = primary_model
     _fast_model = fast_model
+    _gpt_model = gpt_model
+    _kimi_model = kimi_model
 
 
 async def _query(provider: Any, model: str, system: str, content: str, max_tokens: int = 4096) -> str:
@@ -53,7 +59,7 @@ async def _query(provider: Any, model: str, system: str, content: str, max_token
 @registry.register(
     name="council_consult",
     description=(
-        "Get a second opinion by consulting multiple frontier AI models (Claude + GPT-4o) "
+        "Get a second opinion by consulting multiple frontier AI models (Claude + GPT-4o + Kimi) "
         "in parallel. Use this for high-stakes decisions, complex technical problems, "
         "mathematical proofs, scientific claims, architecture trade-offs, business strategy, "
         "or any question where independent verification adds confidence. Returns both "
@@ -104,12 +110,12 @@ async def council_consult(
     # Determine which models to use
     if depth == "fast":
         claude_model = _fast_model
-        gpt_model = "openai/gpt-4o-mini"
-        gpt_model_direct = "gpt-4o-mini"
+        gpt_model = "gpt-4o-mini"
+        kimi_model = _kimi_model
     else:
         claude_model = _primary_model
-        gpt_model = "openai/gpt-4o"
-        gpt_model_direct = "gpt-4o"
+        gpt_model = _gpt_model
+        kimi_model = _kimi_model
 
     max_tokens = 2048 if depth == "fast" else 4096
 
@@ -119,17 +125,15 @@ async def council_consult(
 
     if "anthropic" in _providers:
         members["Claude"] = (_providers["anthropic"], claude_model)
-
-    # GPT via direct OpenAI if available, else via OpenRouter (different model id)
     if "openai" in _providers:
-        members["GPT-4o"] = (_providers["openai"], gpt_model_direct)
-    elif "openrouter" in _providers:
-        members["GPT-4o"] = (_providers["openrouter"], gpt_model)
+        members["GPT-4o"] = (_providers["openai"], gpt_model)
+    if "moonshot" in _providers:
+        members["Kimi"] = (_providers["moonshot"], kimi_model)
 
-    # Fall back to any remaining provider (e.g. HF-only) so council still runs
+    # Fall back to any remaining provider so council still runs
     if not members and _providers:
         name, provider = next(iter(_providers.items()))
-        members[name] = (provider, claude_model if name == "anthropic" else _fast_model)
+        members[name] = (provider, claude_model)
 
     if not members:
         return "Council unavailable: no providers configured."
@@ -164,15 +168,15 @@ async def council_consult(
         else:
             results[name] = result
 
-    # Format as clear dual-perspective output
+    # Format as clear multi-perspective output
     sections = []
     for name, text in results.items():
         sections.append(f"## {name}\n{text}")
 
     output = "\n\n---\n\n".join(sections)
 
-    # Add convergence note if both answered
-    if len(results) == 2:
+    # Add convergence note when multiple members answered
+    if len(results) >= 2:
         output += (
             "\n\n---\n\n"
             "*Council complete. Synthesize the above: where they agree = high confidence. "

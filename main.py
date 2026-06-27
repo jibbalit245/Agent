@@ -3,7 +3,7 @@ Agent Harness — main entry point.
 
 Wires together:
   - Configuration (from .env)
-  - Providers (Anthropic / OpenRouter / HuggingFace)
+  - Providers (Anthropic / OpenAI / Moonshot)
   - Tool registry (web, python, memory, summarize)
   - Agent registry (loads configs from agent_configs/)
   - Agent manager (creates sessions from configs)
@@ -51,18 +51,6 @@ if settings.ANTHROPIC_API_KEY:
     providers["anthropic"] = AnthropicProvider(api_key=settings.ANTHROPIC_API_KEY)
     logger.info("Anthropic provider initialized")
 
-if settings.OPENROUTER_API_KEY:
-    try:
-        from harness.providers.openrouter_provider import OpenRouterProvider
-        providers["openrouter"] = OpenRouterProvider(
-            api_key=settings.OPENROUTER_API_KEY,
-            app_name=settings.OPENROUTER_APP_NAME,
-            app_url=settings.OPENROUTER_APP_URL,
-        )
-        logger.info("OpenRouter provider initialized")
-    except ImportError:
-        logger.warning("OpenRouter provider not available (missing module)")
-
 if settings.OPENAI_API_KEY:
     try:
         from harness.providers.openai_provider import OpenAIProvider
@@ -71,13 +59,19 @@ if settings.OPENAI_API_KEY:
     except Exception as exc:
         logger.warning("OpenAI provider failed: %s", exc)
 
-if settings.HF_TOKEN:
-    from harness.providers.huggingface_provider import HuggingFaceProvider
-    providers["hf"] = HuggingFaceProvider(api_key=settings.HF_TOKEN)
-    logger.info("HuggingFace provider initialized")
+if settings.MOONSHOT_API_KEY:
+    try:
+        from harness.providers.moonshot_provider import MoonshotProvider
+        providers["moonshot"] = MoonshotProvider(
+            api_key=settings.MOONSHOT_API_KEY,
+            base_url=settings.MOONSHOT_BASE_URL,
+        )
+        logger.info("Moonshot (Kimi) provider initialized")
+    except Exception as exc:
+        logger.warning("Moonshot provider failed: %s", exc)
 
 if not providers:
-    logger.error("No providers configured. Set ANTHROPIC_API_KEY, OPENROUTER_API_KEY, or HF_TOKEN.")
+    logger.error("No providers configured. Set ANTHROPIC_API_KEY, OPENAI_API_KEY, or MOONSHOT_API_KEY.")
     sys.exit(1)
 
 # ── Tool registry ──────────────────────────────────────────────────
@@ -119,11 +113,17 @@ primary_provider = providers.get(settings.BRAIN_PROVIDER) or next(iter(providers
 configure_summarize(primary_provider, settings.FAST_MODEL)
 
 # Wire up the council tool with all available providers
-set_council_providers(providers, primary_model=settings.BRAIN_MODEL, fast_model=settings.FAST_MODEL)
+set_council_providers(
+    providers,
+    primary_model=settings.BRAIN_MODEL,
+    fast_model=settings.FAST_MODEL,
+    gpt_model=settings.COUNCIL_GPT_MODEL,
+    kimi_model=settings.COUNCIL_KIMI_MODEL,
+)
 logger.info("Council configured with providers: %s", list(providers.keys()))
 
 # Wire up knowledge graph extractor (Haiku for volume, Sonnet for deep passes)
-_extractor_provider = providers.get("anthropic") or providers.get("openrouter") or primary_provider
+_extractor_provider = providers.get("anthropic") or primary_provider
 set_extractor_provider(
     provider=_extractor_provider,
     fast_model=settings.FAST_MODEL,
@@ -131,22 +131,12 @@ set_extractor_provider(
 )
 logger.info("Knowledge graph extractor ready (fast=%s, deep=%s)", settings.FAST_MODEL, settings.BRAIN_MODEL)
 
-# Wire up Llama Scout long-context tool — prefer openrouter, fall back to hf
-_lc_provider_name = settings.LONG_CONTEXT_PROVIDER or (
-    "openrouter" if "openrouter" in providers else
-    "hf" if "hf" in providers else
-    ""
-)
-if _lc_provider_name and _lc_provider_name in providers:
-    _lc_model = (
-        settings.LONG_CONTEXT_MODEL_HF
-        if _lc_provider_name == "hf"
-        else settings.LONG_CONTEXT_MODEL_OPENROUTER
-    )
-    set_long_context_provider(providers[_lc_provider_name], _lc_model)
-    logger.info("Long-context provider: %s / %s", _lc_provider_name, _lc_model)
+# Wire up Kimi long-context tool — Moonshot is the large-context provider
+if "moonshot" in providers:
+    set_long_context_provider(providers["moonshot"], settings.LONG_CONTEXT_MODEL)
+    logger.info("Long-context provider: moonshot / %s", settings.LONG_CONTEXT_MODEL)
 else:
-    logger.info("Long-context tool inactive (no openrouter or hf provider configured)")
+    logger.info("Long-context tool inactive (no Moonshot provider configured)")
 
 # Log graph stats at startup if the DB is populated
 try:

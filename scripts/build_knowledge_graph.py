@@ -62,16 +62,19 @@ async def main() -> None:
         from harness.providers.anthropic_provider import AnthropicProvider
         providers["anthropic"] = AnthropicProvider(api_key=settings.ANTHROPIC_API_KEY)
         logger.info("Using Anthropic provider")
-    elif settings.OPENROUTER_API_KEY:
-        from harness.providers.openrouter_provider import OpenRouterProvider
-        providers["openrouter"] = OpenRouterProvider(
-            api_key=settings.OPENROUTER_API_KEY,
-            app_name=settings.OPENROUTER_APP_NAME,
-            app_url=settings.OPENROUTER_APP_URL,
+    elif settings.OPENAI_API_KEY:
+        from harness.providers.openai_provider import OpenAIProvider
+        providers["openai"] = OpenAIProvider(api_key=settings.OPENAI_API_KEY)
+        logger.info("Using OpenAI provider")
+    elif settings.MOONSHOT_API_KEY:
+        from harness.providers.moonshot_provider import MoonshotProvider
+        providers["moonshot"] = MoonshotProvider(
+            api_key=settings.MOONSHOT_API_KEY,
+            base_url=settings.MOONSHOT_BASE_URL,
         )
-        logger.info("Using OpenRouter provider")
+        logger.info("Using Moonshot provider")
     else:
-        logger.error("No provider configured. Set ANTHROPIC_API_KEY or OPENROUTER_API_KEY.")
+        logger.error("No provider configured. Set ANTHROPIC_API_KEY, OPENAI_API_KEY, or MOONSHOT_API_KEY.")
         sys.exit(1)
 
     provider = next(iter(providers.values()))

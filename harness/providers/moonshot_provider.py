@@ -1,11 +1,17 @@
 """
-OpenRouter provider.
+Moonshot AI (Kimi) provider.
 
-Proxies requests through OpenRouter's OpenAI-compatible API, allowing
-access to hundreds of models (GPT-4, Gemini, Llama, Mistral, etc.)
-from a single endpoint.
+Moonshot exposes an OpenAI-compatible API, so we use the openai SDK pointed
+at the Moonshot base URL. Kimi K2 offers a large context window (~256K tokens),
+native tool/function calling, and strong reasoning — it serves as both a
+council member and the long-context engine in this harness.
 
-Uses the openai SDK since OpenRouter is fully OpenAI-compatible.
+Models:
+  kimi-k2-0711-preview   — flagship, ~256K context, tool use
+  kimi-latest            — latest general model
+  moonshot-v1-128k       — 128K context
+  moonshot-v1-32k        — 32K context
+  moonshot-v1-8k         — 8K context
 """
 
 import json
@@ -18,36 +24,24 @@ from harness.providers.base import BaseProvider, Message, ToolDefinition
 
 logger = logging.getLogger(__name__)
 
-_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+_MOONSHOT_BASE_URL = "https://api.moonshot.ai/v1"
 
 
-class OpenRouterProvider(BaseProvider):
-    """
-    Provider for any model accessible via OpenRouter.
-
-    Supports:
-      - Native tool/function calling (OpenAI function format)
-      - All models on OpenRouter that support tool use
-    """
+class MoonshotProvider(BaseProvider):
+    """Provider for Moonshot AI (Kimi) models via their OpenAI-compatible API."""
 
     def __init__(
         self,
         api_key: str,
-        app_name: str = "AgentHarness",
-        app_url: str = "https://github.com/agent-harness",
-        base_url: str = _OPENROUTER_BASE_URL,
+        base_url: str = _MOONSHOT_BASE_URL,
     ) -> None:
         self.client = openai.AsyncOpenAI(
             api_key=api_key,
             base_url=base_url,
-            default_headers={
-                "HTTP-Referer": app_url,
-                "X-Title": app_name,
-            },
         )
 
     def _convert_messages(self, messages: list[Message], system: str) -> list[dict[str, Any]]:
-        """Convert our Message objects to OpenAI API format."""
+        """Convert our Message objects to OpenAI chat format."""
         result: list[dict[str, Any]] = []
 
         if system:
@@ -110,7 +104,7 @@ class OpenRouterProvider(BaseProvider):
         max_tokens: int = 4096,
         thinking: dict | None = None,
     ) -> dict[str, Any]:
-        """Run inference via OpenRouter and return normalized response."""
+        """Run inference via Moonshot and return a normalized response."""
         api_messages = self._convert_messages(messages, system)
         api_tools = self._convert_tools(tools) if tools else []
 
@@ -124,16 +118,8 @@ class OpenRouterProvider(BaseProvider):
             kwargs["tools"] = api_tools
             kwargs["tool_choice"] = "auto"
 
-        # reasoning_effort for OpenAI o-series and compatible models via OpenRouter
-        if thinking and thinking.get("enabled"):
-            effort = thinking.get("effort", "high")
-            model_lower = model.lower()
-            if any(x in model_lower for x in ("o1", "o3", "o4", "reasoning")):
-                kwargs["reasoning_effort"] = effort
-                kwargs.pop("temperature", None)  # o-series ignores temperature
-
         logger.debug(
-            "OpenRouter request: model=%s, messages=%d, tools=%d",
+            "Moonshot request: model=%s, messages=%d, tools=%d",
             model, len(api_messages), len(api_tools),
         )
 
@@ -158,7 +144,6 @@ class OpenRouterProvider(BaseProvider):
                     "arguments": args,
                 })
 
-        # Map finish_reason to our internal stop_reason names
         finish_reason_map = {
             "stop": "end_turn",
             "tool_calls": "tool_use",
