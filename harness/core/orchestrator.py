@@ -9,12 +9,12 @@ Drives the Brain through repeated tool-use cycles until:
 Supports both native (API tool calling) and tags (XML pass-through) modes.
 """
 
+import asyncio
 import logging
 from dataclasses import dataclass
 from typing import Any
 
 from harness.core.brain import Brain
-from harness.core.tag_parser import inject_tool_result, strip_tool_tags, has_tool_calls
 from harness.providers.base import Message, ToolDefinition
 from harness.tools.registry import ToolRegistry
 
@@ -149,74 +149,41 @@ class Orchestrator:
                 stopped_reason = "end_turn"
                 break
 
-            # Execute all tool calls in this response
-            if self.brain.mode == "native":
-                # In native mode: append assistant message with tool_calls, then tool results.
-                # Carry raw_content (provider's native blocks) when available so signed
-                # thinking blocks survive the round-trip — Anthropic requires this.
+            # Append assistant message with tool_calls, then the tool results.
+            # Carry raw_content (provider's native blocks) when available so signed
+            # thinking blocks survive the round-trip — Anthropic requires this.
+            messages.append(Message(
+                role="assistant",
+                content=text,
+                tool_calls=[
+                    {"id": tc.get("id", f"call_{i}"), "name": tc["name"], "arguments": tc["arguments"]}
+                    for i, tc in enumerate(tool_calls)
+                ],
+                raw_content=response.get("raw_content"),
+            ))
+
+            # Execute all tool calls in this response concurrently.
+            results = await asyncio.gather(
+                *(self._execute_tool(tc["name"], tc["arguments"]) for tc in tool_calls)
+            )
+            for tc, result in zip(tool_calls, results):
+                all_tool_calls.append({
+                    "name": tc["name"],
+                    "arguments": tc["arguments"],
+                    "result": result,
+                })
                 messages.append(Message(
-                    role="assistant",
-                    content=text,
-                    tool_calls=[
-                        {"id": tc.get("id", f"call_{i}"), "name": tc["name"], "arguments": tc["arguments"]}
-                        for i, tc in enumerate(tool_calls)
-                    ],
-                    raw_content=response.get("raw_content"),
+                    role="tool",
+                    content=result,
+                    tool_call_id=tc.get("id", f"call_{iteration}"),
+                    tool_name=tc["name"],
                 ))
-
-                for tc in tool_calls:
-                    result = await self._execute_tool(tc["name"], tc["arguments"])
-                    all_tool_calls.append({
-                        "name": tc["name"],
-                        "arguments": tc["arguments"],
-                        "result": result,
-                    })
-                    tool_id = tc.get("id", f"call_{iteration}")
-                    messages.append(Message(
-                        role="tool",
-                        content=result,
-                        tool_call_id=tool_id,
-                        tool_name=tc["name"],
-                    ))
-
-            else:
-                # Tags mode: inject results inline into the assistant text
-                augmented_text = text
-                for tc in tool_calls:
-                    result = await self._execute_tool(tc["name"], tc["arguments"])
-                    all_tool_calls.append({
-                        "name": tc["name"],
-                        "arguments": tc["arguments"],
-                        "result": result,
-                    })
-                    from harness.core.tag_parser import ToolCall as TC, inject_tool_result
-                    fake_call = TC(name=tc["name"], arguments=tc["arguments"], raw_tag=tc["_raw_tag"])
-                    augmented_text = inject_tool_result(augmented_text, fake_call, result)
-
-                # Append the augmented assistant message back to history
-                messages.append(Message(role="assistant", content=augmented_text))
-
-                # Ask the model to continue with a follow-up user turn
-                messages.append(Message(
-                    role="user",
-                    content="Please continue based on the tool results above.",
-                ))
-
-            # If stop_reason was "end_turn" despite tool calls being present
-            # (can happen in tags mode on final pass), break
-            if stop_reason == "end_turn" and not tool_calls:
-                final_text = text
-                break
 
         else:
             # Loop exhausted
             logger.warning("Max iterations (%d) reached", self.max_iterations)
             final_text = text if text else "I reached the maximum number of tool-use steps. Here's what I found so far."
             stopped_reason = "max_iterations"
-
-        # For tags mode, strip any remaining tool tags from the final output
-        if self.brain.mode == "tags":
-            final_text = strip_tool_tags(final_text)
 
         return OrchestratorResult(
             text=final_text.strip(),
