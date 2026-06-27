@@ -46,6 +46,12 @@ class Settings:
     SWARM_MODEL: str = os.getenv("SWARM_MODEL", "kimi-k2.6")
     SWARM_MAX_AGENTS: int = int(os.getenv("SWARM_MAX_AGENTS", "50"))  # default budget; hard cap 300
 
+    # OpenClaw gateway (WebSocket server the OpenClaw phone app connects to)
+    OPENCLAW_GATEWAY_ENABLED: bool = os.getenv("OPENCLAW_GATEWAY_ENABLED", "false").lower() in ("1", "true", "yes", "on")
+    OPENCLAW_GATEWAY_HOST: str = os.getenv("OPENCLAW_GATEWAY_HOST", "0.0.0.0")
+    OPENCLAW_GATEWAY_PORT: int = int(os.getenv("OPENCLAW_GATEWAY_PORT", "18789"))
+    OPENCLAW_GATEWAY_TOKEN: str = os.getenv("OPENCLAW_GATEWAY_TOKEN", "")
+
     # Agentic loop limits
     MAX_ITERATIONS: int = int(os.getenv("MAX_ITERATIONS", "10"))
 
@@ -58,8 +64,8 @@ class Settings:
     def validate(self) -> list[str]:
         """Return a list of validation error strings (empty = all good)."""
         errors = []
-        if not self.TELEGRAM_BOT_TOKEN:
-            errors.append("TELEGRAM_BOT_TOKEN is required")
+        if not self.TELEGRAM_BOT_TOKEN and not self.OPENCLAW_GATEWAY_ENABLED:
+            errors.append("Set TELEGRAM_BOT_TOKEN, or enable OPENCLAW_GATEWAY_ENABLED, to have at least one gateway")
         if self.BRAIN_PROVIDER == "anthropic" and not self.ANTHROPIC_API_KEY:
             errors.append("ANTHROPIC_API_KEY is required when BRAIN_PROVIDER=anthropic")
         if self.BRAIN_PROVIDER == "openai" and not self.OPENAI_API_KEY:

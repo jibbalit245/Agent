@@ -6,6 +6,9 @@ httpx==0.28.1
 # Telegram bot
 python-telegram-bot==21.9
 
+# OpenClaw gateway (WebSocket server for the OpenClaw phone app)
+websockets==14.1
+
 # Web search and scraping
 duckduckgo-search==7.2.1
 beautifulsoup4==4.12.3

@@ -188,14 +188,31 @@ agent_manager = AgentManager(
 logger.info("Agent manager ready. Default agent: %s", default_agent_id)
 
 # ── Telegram gateway ────────────────────────────────────────────────
-from harness.gateways.telegram import TelegramBot
+bot = None
+if settings.TELEGRAM_BOT_TOKEN:
+    from harness.gateways.telegram import TelegramBot
+    bot = TelegramBot(
+        token=settings.TELEGRAM_BOT_TOKEN,
+        agent_manager=agent_manager,
+        agent_registry=agent_registry,
+        memory_dir=settings.MEMORY_DIR,
+    )
 
-bot = TelegramBot(
-    token=settings.TELEGRAM_BOT_TOKEN,
-    agent_manager=agent_manager,
-    agent_registry=agent_registry,
-    memory_dir=settings.MEMORY_DIR,
-)
+# ── OpenClaw gateway (WebSocket server for the OpenClaw phone app) ────
+openclaw_gateway = None
+if settings.OPENCLAW_GATEWAY_ENABLED:
+    from harness.gateways.openclaw import OpenClawGateway
+    openclaw_gateway = OpenClawGateway(
+        agent_manager=agent_manager,
+        token=settings.OPENCLAW_GATEWAY_TOKEN,
+        host=settings.OPENCLAW_GATEWAY_HOST,
+        port=settings.OPENCLAW_GATEWAY_PORT,
+        memory_dir=settings.MEMORY_DIR,
+    )
+    logger.info(
+        "OpenClaw gateway enabled on ws://%s:%d",
+        settings.OPENCLAW_GATEWAY_HOST, settings.OPENCLAW_GATEWAY_PORT,
+    )
 
 # ── Nightly knowledge graph refresh ────────────────────────────────
 import asyncio as _asyncio
@@ -237,4 +254,15 @@ if __name__ == "__main__":
     _t = _threading.Thread(target=_refresh_thread, daemon=True, name="kg-refresh")
     _t.start()
 
-    bot.run()
+    if bot is not None:
+        # Telegram is the foreground loop; OpenClaw (if enabled) runs in a thread.
+        if openclaw_gateway is not None:
+            openclaw_gateway.run_in_thread()
+        bot.run()
+    elif openclaw_gateway is not None:
+        # No Telegram — OpenClaw gateway is the foreground loop.
+        logger.info("Starting Agent Harness with OpenClaw gateway as the primary interface...")
+        _asyncio.run(openclaw_gateway.serve())
+    else:
+        logger.error("No gateway configured. Set TELEGRAM_BOT_TOKEN or OPENCLAW_GATEWAY_ENABLED.")
+        sys.exit(1)
