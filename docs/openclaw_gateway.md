@@ -64,15 +64,40 @@ localtonet publishes a one-stop OpenClaw self-host guide and gives you a stable
 
 ## 3. Connect from the app
 
-In the OpenClaw app:
+Two ways — pick whichever the app offers you.
+
+### Option 1 — Manual (URL + token)
 
 1. Add a gateway / server.
 2. **URL:** the `wss://…` tunnel URL from step 2.
 3. **Token:** your `OPENCLAW_GATEWAY_TOKEN`.
 4. Connect — you should see **Connected**.
 
-Send a message; it routes to the harness's active agent and the reply streams back.
-Switch agents, run `/swarm`-style work, etc. — same agents as every other gateway.
+### Option 2 — Connect via code / QR
+
+Generate a setup code on the machine running the harness (it reads your
+`OPENCLAW_GATEWAY_TOKEN` and embeds the URL the phone will use):
+
+```bash
+python scripts/openclaw_pair.py --url wss://ab12cd34.ngrok-free.app
+# LAN instead of a tunnel:
+python scripts/openclaw_pair.py --url ws://192.168.1.50:18789
+```
+
+It prints a base64 **setup code** (and a QR if `qrcode` is installed). In the app
+choose **connect via code**, then scan the QR or paste the code. The code carries
+the URL + a short-lived bootstrap token, so you don't type anything else.
+
+The code expires (default 15 min — `--ttl <seconds>` to change). Re-run for a
+fresh one if it times out. The bootstrap token is single-use-ish and short-lived;
+your long-lived `OPENCLAW_GATEWAY_TOKEN` is never put in the code.
+
+> The `--url` MUST be the address the phone can actually reach (your tunnel or LAN
+> IP) — never `127.0.0.1`/`localhost`, which on the phone means the phone itself.
+
+Once connected (either option): send a message; it routes to the harness's active
+agent and the reply streams back. Switch agents, run swarm work, etc. — same agents
+as every other gateway.
 
 ## 4. Pick the agent the app talks to
 

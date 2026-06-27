@@ -29,6 +29,9 @@ talk to your agents from the app — is the focus.
 """
 
 import asyncio
+import base64
+import hashlib
+import hmac
 import json
 import logging
 import secrets
@@ -44,6 +47,44 @@ _PROTOCOL_MAX = 4
 # Methods this gateway advertises in hello-ok.features.methods
 _FEATURE_METHODS = ["connect", "chat.send", "ping", "sessions.list"]
 _FEATURE_EVENTS = ["connect.challenge", "chat", "agent", "tick", "heartbeat"]
+
+
+# ── Pairing / setup-code helpers ──────────────────────────────────────────────
+# A setup code is base64(JSON {url, bootstrapToken}). The bootstrap token is a
+# short-lived HMAC credential signed with the gateway secret, so the running
+# gateway can validate codes it didn't store (stateless across processes).
+
+def mint_bootstrap_token(secret: str, ttl_seconds: int = 900) -> str:
+    """Create a short-lived single-device bootstrap token signed with the gateway secret."""
+    exp = int(time.time()) + ttl_seconds
+    nonce = secrets.token_hex(8)
+    payload = f"{exp}.{nonce}"
+    sig = hmac.new(secret.encode(), payload.encode(), hashlib.sha256).hexdigest()[:32]
+    raw = f"{payload}.{sig}".encode()
+    return base64.urlsafe_b64encode(raw).decode().rstrip("=")
+
+
+def verify_bootstrap_token(secret: str, token: str) -> bool:
+    """Validate a bootstrap token's signature and expiry against the gateway secret."""
+    if not secret or not token:
+        return False
+    try:
+        pad = "=" * (-len(token) % 4)
+        raw = base64.urlsafe_b64decode(token + pad).decode()
+        exp_s, nonce, sig = raw.split(".")
+        payload = f"{exp_s}.{nonce}"
+        expected = hmac.new(secret.encode(), payload.encode(), hashlib.sha256).hexdigest()[:32]
+        if not hmac.compare_digest(sig, expected):
+            return False
+        return int(exp_s) >= int(time.time())
+    except Exception:
+        return False
+
+
+def make_setup_code(url: str, bootstrap_token: str) -> str:
+    """Build the base64 setup code the OpenClaw app scans/pastes."""
+    payload = {"url": url, "bootstrapToken": bootstrap_token}
+    return base64.b64encode(json.dumps(payload).encode()).decode()
 
 
 class OpenClawGateway:
@@ -68,17 +109,32 @@ class OpenClawGateway:
     # ── auth ────────────────────────────────────────────────────────────────
 
     def _check_auth(self, params: dict, remote: str) -> tuple[bool, str]:
-        """Validate the connect request's auth. Returns (ok, reason)."""
+        """
+        Validate the connect request's auth. Returns (ok, reason).
+
+        Accepts three credential forms:
+          - shared token: auth.token / auth.password == gateway token
+          - setup-code pairing: auth.bootstrapToken (short-lived, HMAC-signed)
+          - bootstrap token supplied in auth.token (some clients reuse that field)
+        """
         auth = params.get("auth") or {}
         if not self.token:
             # No token configured: only allow loopback (dev convenience).
             if remote.startswith("127.") or remote == "::1" or remote.startswith("localhost"):
                 return True, ""
             return False, "gateway token not configured; remote connections require a token"
-        supplied = auth.get("token") or auth.get("password") or ""
-        if secrets.compare_digest(str(supplied), str(self.token)):
+
+        supplied = str(auth.get("token") or auth.get("password") or "")
+        boot = str(auth.get("bootstrapToken") or "")
+
+        if supplied and secrets.compare_digest(supplied, str(self.token)):
             return True, ""
-        return False, "invalid auth token"
+        if boot and verify_bootstrap_token(self.token, boot):
+            return True, ""
+        # Some clients carry the pairing code's token in auth.token
+        if supplied and verify_bootstrap_token(self.token, supplied):
+            return True, ""
+        return False, "invalid auth token or expired pairing code"
 
     # ── frame helpers ────────────────────────────────────────────────────────
 
