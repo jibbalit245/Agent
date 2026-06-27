@@ -12,6 +12,7 @@ Handles:
   - /myagent                — show the currently active agent's config
   - /thinking [level]       — control reasoning depth
   - /workshop [idea]        — start a development pipeline session
+  - /swarm [idea]           — guided concept→deploy pipeline for the Kimi K2.6 agent swarm
 """
 
 import logging
@@ -47,6 +48,9 @@ _W_NAME, _W_DESCRIPTION, _W_SYSTEM, _W_MODEL, _W_TOOLS, _W_TEMP, _W_CONFIRM = ra
 
 # Workshop states (20-24, non-overlapping with wizard 0-6)
 _WS_DISCOVER, _WS_PLAN, _WS_APPROVE, _WS_EXECUTE, _WS_REFINE = range(20, 25)
+
+# Swarm orchestration states (30-33, non-overlapping with the above)
+_SW_CONCEPT, _SW_CLARIFY, _SW_BRIEF, _SW_REFINE = range(30, 34)
 
 # ------------------------------------------------------------------
 # Workshop coordinator system prompt
@@ -111,6 +115,77 @@ When genuinely complete, summarize what was built.
 - If you're unsure what they want, ask — don't guess and build the wrong thing.
 - If you hit a genuine blocker, say so clearly: what's blocked, why, what you need.
 - Never say "I'll do X" without actually doing it in the same message.
+"""
+
+# ------------------------------------------------------------------
+# Swarm Architect system prompt (phase-aware guided orchestration)
+# ------------------------------------------------------------------
+
+_SWARM_ARCHITECT_SYSTEM = """\
+You are running a **Swarm Orchestration Session** — a guided pipeline that turns a rough concept \
+into a precisely structured Kimi K2.6 Agent Swarm deployment.
+
+The swarm is powerful but GARBAGE-SENSITIVE: a vague task makes its coordinator spawn overlapping, \
+conflicting sub-agents and the output is mush. Your structuring is the entire reason this works. \
+Never pass a raw idea to swarm_solve — always compile a SWARM BRIEF first.
+
+## Phases
+
+### CONCEPT (context says CONCEPT)
+The person is giving you a raw idea. Reflect the single end goal back in one sentence to confirm you \
+understood it. Don't interrogate yet — just lock the target, then move to clarifying.
+
+### CLARIFY (context says CLARIFY)
+Ask at most 1-3 SHARP questions at a time — only for what you genuinely cannot infer:
+- The single end goal (if still fuzzy)
+- The exact form of the final deliverable (report? codebase? dataset? deck + spreadsheet?)
+- Hard constraints, required sources, audience, scope boundaries
+- The independent parts the work naturally splits into
+Use your own tools (web_search, graph_query, knowledge_search, long_context_read) to gather context \
+rather than asking the human for what you can find yourself. When you have enough, write exactly:
+"**I have enough to draft the brief. Say 'draft it' when ready.**"
+
+### BRIEF (context says BRIEF)
+First decide if this is even swarm-shaped. The swarm wins on BREADTH — many INDEPENDENT units running \
+in parallel. It does NOT help sequential reasoning (one bug, one decision, one proof, one small edit). \
+If it's not swarm-shaped, say so plainly and recommend council_consult or a direct answer instead.
+Otherwise produce EXACTLY this structure:
+
+# SWARM BRIEF
+## Objective
+[one sentence — the single end goal]
+## Final Deliverable
+[exact shape and format — be concrete: "single markdown report ~3000 words, H2 per theme, one comparison table, inline citations" — not "a report"]
+## Shared Context
+[everything every sub-agent needs: background, constraints, audience, sources to use/avoid — stated once]
+## Parallelizable Work Units
+1. <name> — scope: <what it covers> — input: <what it works from> — output: <what it returns>
+2. ...
+[each MUST be independent — no unit needs another's mid-run output. If two overlap, merge them. Naming these explicitly is the single biggest driver of swarm quality.]
+## Integration
+[how the unit outputs combine into the Final Deliverable + consistency rules: terminology, format, dedup]
+## Constraints & Success Criteria
+- [must/must-not, quality bar, what 'done' looks like]
+## Recommended max_agents: N
+[≈ number of independent units, a little headroom, capped 300. 10-30 moderate; 100+ only for genuinely large work. Never inflate — idle agents add cost and overlap, not quality.]
+
+End with: "**Say 'deploy' to launch the swarm, or give me corrections.**"
+
+### ORCHESTRATE (context says ORCHESTRATE)
+Call swarm_solve NOW with the ENTIRE approved brief as the `task` argument and your Recommended \
+max_agents as `max_agents`. Put any large source material in `context`. Then return the swarm's \
+synthesized result verbatim-enough to be useful, and flag anything that looks thin or incomplete.
+
+### REFINE (context says REFINE)
+Review the swarm's output against the brief. Identify what's missing, weak, or wrong. To fix, re-run \
+swarm_solve with a TIGHTENED brief targeting only the weak units — don't re-run the whole thing if \
+only part fell short. When genuinely complete, summarize what was produced.
+
+## Rules
+- No fluff. Every sentence carries information. The brief is the product — make it sharp.
+- Name the independent work units explicitly. Always.
+- Right-size max_agents to real work units.
+- Never say you'll do something without doing it in the same message.
 """
 
 # ------------------------------------------------------------------
@@ -213,6 +288,7 @@ class TelegramBot:
         self.allowed_user_ids = set(allowed_user_ids) if allowed_user_ids else None
         self._wizard_data: dict[int, dict[str, Any]] = {}  # user_id → draft config
         self._workshop: dict[int, dict[str, Any]] = {}     # user_id → workshop state
+        self._swarm: dict[int, dict[str, Any]] = {}        # user_id → swarm orchestration state
 
     def _user_id(self, update: Update) -> str:
         """Return a stable string session ID for this Telegram user."""
@@ -298,6 +374,11 @@ class TelegramBot:
             /workshop — start a structured build session (discover → plan → execute → refine)
             /workshop `<idea>` — start with an initial idea
             /wsdone — end current workshop session
+
+            *Swarm Orchestration*
+            /swarm — guided concept → clarify → brief → deploy → refine for the Kimi K2.6 agent swarm
+            /swarm `<idea>` — start with an initial idea
+            /swarmdone — end current swarm session
 
             *Reasoning Depth*
             /thinking — show current thinking config
@@ -1018,6 +1099,211 @@ class TelegramBot:
         return ConversationHandler.END
 
     # ------------------------------------------------------------------
+    # Swarm orchestration pipeline (concept → clarify → brief → deploy → refine)
+    # ------------------------------------------------------------------
+
+    async def _sw_chat(self, user_id: int, phase: str, message: str) -> str:
+        """Route a swarm-session message through the Swarm Architect with phase context."""
+        from harness.core.orchestrator import Orchestrator
+        from harness.core.brain import Brain
+        from harness.tools.registry import registry as tool_registry
+        from harness.providers.base import Message
+
+        sw = self._swarm[user_id]
+
+        # Build or reuse the architect orchestrator
+        if "orchestrator" not in sw:
+            # Prefer the dedicated swarm-architect agent config for model + tools
+            arch = self.registry.get("swarm-architect")
+            if arch is not None:
+                provider_name = arch.provider
+                model = arch.model
+                enabled_tools = arch.tools
+                thinking = arch.thinking or None
+            else:
+                session = self.manager.ensure_session(f"telegram_{user_id}")
+                provider_name = session.agent_config.provider
+                model = session.agent_config.model
+                enabled_tools = None  # all tools (includes swarm_solve)
+                thinking = session.agent_config.thinking or None
+
+            provider = self.manager.providers.get(provider_name) or next(
+                iter(self.manager.providers.values())
+            )
+            brain = Brain(
+                provider=provider,
+                model=model,
+                system_prompt=_SWARM_ARCHITECT_SYSTEM,
+                thinking=thinking,
+            )
+            sw["orchestrator"] = Orchestrator(
+                brain=brain,
+                tool_registry=tool_registry,
+                max_iterations=15,
+                system_prompt=_SWARM_ARCHITECT_SYSTEM,
+                enabled_tools=enabled_tools,
+            )
+            sw["history"] = []
+
+        prefixed = f"[SWARM PHASE: {phase}]\n\n{message}"
+        # Swarm deployment can be slow — give it room on the orchestrate phase.
+        max_tokens = 8192 if phase == "ORCHESTRATE" else 4096
+        result = await sw["orchestrator"].run(
+            user_message=prefixed,
+            history=sw["history"],
+            temperature=0.3,
+            max_tokens=max_tokens,
+        )
+
+        sw["history"].append(Message(role="user", content=prefixed))
+        sw["history"].append(Message(role="assistant", content=result.text))
+        return result.text or "(no response)"
+
+    async def sw_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        """Entry point: /swarm [optional initial concept]"""
+        if not self._is_allowed(update):
+            return ConversationHandler.END
+        uid = update.effective_user.id
+        await self._setup_session(update)
+
+        if self.registry.get("swarm-architect") is None:
+            logger.info("swarm-architect agent not found; falling back to active agent for /swarm")
+
+        self._swarm[uid] = {"phase": "CONCEPT"}
+
+        initial = " ".join(context.args) if context.args else ""
+
+        await self._reply(
+            update,
+            "*Swarm Orchestration* 🐝\n\n"
+            "Guided pipeline from concept to a deployed Kimi K2.6 agent swarm:\n"
+            "  1. *Concept* — your raw idea\n"
+            "  2. *Clarify* — I ask a few sharp questions\n"
+            "  3. *Brief* — I draft a structured swarm brief for your review\n"
+            "  4. *Deploy* — I launch the swarm with the approved brief\n"
+            "  5. *Refine* — we re-run any thin parts\n\n"
+            "Steps you drive:\n"
+            "  `draft it` → build the brief\n"
+            "  `deploy` → launch the swarm\n"
+            "  `rerun` → re-deploy after edits\n"
+            "  `/swarmdone` → end the session\n\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            "**What do you want the swarm to build or figure out?** Give me the rough idea — "
+            "don't worry about structure, that's my job."
+            + (f"\n\n_(You said: {initial})_" if initial else ""),
+        )
+
+        if initial:
+            self._swarm[uid]["phase"] = "CLARIFY"
+            await update.message.chat.send_action("typing")
+            response = await self._sw_chat(uid, "CLARIFY", initial)
+            await self._reply(update, response)
+            return _SW_CLARIFY
+
+        return _SW_CONCEPT
+
+    async def sw_concept(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        """CONCEPT phase — capture the raw idea, then move to clarify."""
+        uid = update.effective_user.id
+        text = update.message.text.strip()
+        self._swarm[uid]["phase"] = "CLARIFY"
+        await update.message.chat.send_action("typing")
+        response = await self._sw_chat(uid, "CLARIFY", text)
+        await self._reply(update, response)
+        return _SW_CLARIFY
+
+    async def sw_clarify(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        """CLARIFY phase — targeted questions until ready to draft the brief."""
+        uid = update.effective_user.id
+        text = update.message.text.strip()
+        lower = text.lower()
+
+        if any(k in lower for k in ("draft it", "draft the brief", "brief it", "build the brief", "make the brief")):
+            self._swarm[uid]["phase"] = "BRIEF"
+            await update.message.chat.send_action("typing")
+            response = await self._sw_chat(uid, "BRIEF", text)
+            await self._reply(update, response)
+            return _SW_BRIEF
+
+        await update.message.chat.send_action("typing")
+        response = await self._sw_chat(uid, "CLARIFY", text)
+        await self._reply(update, response)
+        return _SW_CLARIFY
+
+    async def sw_brief(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        """BRIEF phase — user reviews/edits the brief; 'deploy' launches the swarm."""
+        uid = update.effective_user.id
+        text = update.message.text.strip()
+        lower = text.lower()
+
+        if any(k in lower for k in ("deploy", "launch", "orchestrate", "go", "send it", "fire it")):
+            return await self._sw_deploy(update, uid, "Deploy the swarm now using the approved brief.")
+
+        # Otherwise treat as corrections — regenerate the brief
+        await update.message.chat.send_action("typing")
+        response = await self._sw_chat(uid, "BRIEF", text)
+        await self._reply(update, response)
+        return _SW_BRIEF
+
+    async def _sw_deploy(self, update: Update, uid: int, instruction: str) -> int:
+        """Fire the swarm via the architect (which calls swarm_solve), then go to refine."""
+        self._swarm[uid]["phase"] = "ORCHESTRATE"
+        await self._reply(update, "🐝 *Deploying swarm…* this can take a while — Kimi is decomposing and running sub-agents.")
+        await update.message.chat.send_action("typing")
+        try:
+            response = await self._sw_chat(uid, "ORCHESTRATE", instruction)
+        except Exception as exc:
+            logger.error("swarm deploy failed for %s: %s", uid, exc, exc_info=True)
+            await self._reply(
+                update,
+                f"Swarm deploy failed: {type(exc).__name__}: {exc}\n\n"
+                "Check that MOONSHOT_API_KEY is set. You can edit the brief and try `deploy` again.",
+                parse_mode=None,
+            )
+            return _SW_BRIEF
+        await self._reply(update, response)
+        self._swarm[uid]["phase"] = "REFINE"
+        await self._reply(
+            update,
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            "*Refine:* tell me what's thin and I'll re-run those parts, say `rerun` to redeploy, "
+            "or `/swarmdone` to finish.",
+        )
+        return _SW_REFINE
+
+    async def sw_refine(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        """REFINE phase — re-run weak units or finish."""
+        uid = update.effective_user.id
+        text = update.message.text.strip()
+        lower = text.lower()
+
+        if any(k in lower for k in ("rerun", "re-run", "redeploy", "deploy again", "run again")):
+            return await self._sw_deploy(update, uid, f"Re-run the swarm with a tightened brief. Feedback: {text}")
+
+        await update.message.chat.send_action("typing")
+        response = await self._sw_chat(uid, "REFINE", text)
+        await self._reply(update, response)
+        return _SW_REFINE
+
+    async def sw_done(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        """End the swarm session."""
+        uid = update.effective_user.id
+        sw = self._swarm.pop(uid, {})
+        turns = len(sw.get("history", [])) // 2
+        await self._reply(
+            update,
+            f"*Swarm session ended.* ({turns} turns)\n\n"
+            "Your normal chat session is still active. Start a new one with `/swarm`.",
+        )
+        return ConversationHandler.END
+
+    async def sw_cancel(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        uid = update.effective_user.id
+        self._swarm.pop(uid, None)
+        await self._reply(update, "Swarm session cancelled. Use `/swarm` to start a new one.")
+        return ConversationHandler.END
+
+    # ------------------------------------------------------------------
     # Application builder
     # ------------------------------------------------------------------
 
@@ -1070,7 +1356,36 @@ class TelegramBot:
             allow_reentry=True,
         )
 
+        # Swarm orchestration ConversationHandler
+        swarm = ConversationHandler(
+            entry_points=[CommandHandler("swarm", self.sw_start)],
+            states={
+                _SW_CONCEPT: [
+                    CommandHandler("swarmdone", self.sw_done),
+                    MessageHandler(_ws_text, self.sw_concept),
+                ],
+                _SW_CLARIFY: [
+                    CommandHandler("swarmdone", self.sw_done),
+                    MessageHandler(_ws_text, self.sw_clarify),
+                ],
+                _SW_BRIEF: [
+                    CommandHandler("swarmdone", self.sw_done),
+                    MessageHandler(_ws_text, self.sw_brief),
+                ],
+                _SW_REFINE: [
+                    CommandHandler("swarmdone", self.sw_done),
+                    MessageHandler(_ws_text, self.sw_refine),
+                ],
+            },
+            fallbacks=[
+                CommandHandler("cancel", self.sw_cancel),
+                CommandHandler("swarmdone", self.sw_done),
+            ],
+            allow_reentry=True,
+        )
+
         app.add_handler(workshop)
+        app.add_handler(swarm)
         app.add_handler(wizard)
         app.add_handler(CommandHandler("start", self.cmd_start))
         app.add_handler(CommandHandler("help", self.cmd_help))
@@ -1101,6 +1416,8 @@ class TelegramBot:
             BotCommand("thinking", "Control reasoning depth: /thinking [off|low|medium|high|N]"),
             BotCommand("workshop", "Start development pipeline: /workshop [initial idea]"),
             BotCommand("wsdone", "End the current workshop session"),
+            BotCommand("swarm", "Guided swarm orchestration: /swarm [initial idea]"),
+            BotCommand("swarmdone", "End the current swarm session"),
             BotCommand("reset", "Clear conversation history"),
             BotCommand("cancel", "Cancel current operation"),
         ]
